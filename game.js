@@ -132,10 +132,14 @@ function saveColorChoice(i) {
   try { localStorage.setItem('snakeColor', i); } catch (e) { }
 }
 
-// How the player steers on a computer: 'keys' (arrow keys) or 'mouse'.
+// How the player steers on a computer: 'keys' (arrow keys), 'wasd' or 'mouse'.
 // Picked on the start screen and saved the same way.
+const CONTROLS = ['keys', 'wasd', 'mouse'];
 function loadControls() {
-  try { return localStorage.getItem('snakeControls') === 'mouse' ? 'mouse' : 'keys'; } catch (e) { return 'keys'; }
+  try {
+    const saved = localStorage.getItem('snakeControls');
+    return CONTROLS.includes(saved) ? saved : 'keys';
+  } catch (e) { return 'keys'; }
 }
 function saveControls(choice) {
   try { localStorage.setItem('snakeControls', choice); } catch (e) { }
@@ -250,8 +254,9 @@ class StartScene extends Phaser.Scene {
   // On a wide screen it's two columns side by side; on a phone, one long one.
   setupLegend() {
     const controls = ['HOW TO MOVE',
-      '⌨️  Arrow keys steer',
-      '🖱️  Or pick Mouse (C): you follow it',
+      '⌨️  Pick Arrows, W A S D or Mouse',
+      '    on the start screen (C switches)',
+      '🖱️  Mouse: your snake follows it',
       '👥  2 players: P1 uses W A S D,',
       '    P2 uses the arrow keys',
       '📱  Phone: swipe the way to go',
@@ -287,25 +292,34 @@ class StartScene extends Phaser.Scene {
     this.legend = box;
   }
 
-  // Arrow keys or mouse? Two buttons under the title; the picked one
-  // is lit up. The C key switches too. Phones always swipe, so it's only
-  // on computers.
+  // Arrow keys, W A S D or mouse? A row of buttons under the title; the
+  // picked one is lit up. The C key moves to the next one. Phones always
+  // swipe, so it's only on computers.
+  // (With 2 players on one keyboard, it's always W A S D vs the arrows.)
   setupControlsPicker() {
     const y = HEIGHT / 2 - 168;
-    this.add.text(WIDTH / 2 - 130, y, 'Steer with:', { fontSize: '18px', color: '#cccccc' }).setOrigin(1, 0.5);
+    const labels = { keys: '⬆️ Arrows', wasd: '🔤 W A S D', mouse: '🖱️ Mouse' };
     const style = { fontSize: '18px', padding: { x: 10, y: 5 } };
-    const keys = this.add.text(WIDTH / 2 - 115, y, '⌨️ Arrow keys', style).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
-    const mouse = this.add.text(WIDTH / 2 + 60, y, '🖱️ Mouse', style).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
-    this.add.text(WIDTH / 2 + 175, y, '(C)', { fontSize: '16px', color: '#888888' }).setOrigin(0, 0.5);
-    const show = () => {
-      const picked = loadControls();
-      keys.setColor(picked === 'keys' ? '#111111' : '#cccccc').setBackgroundColor(picked === 'keys' ? '#3fa9f5' : '#333333');
-      mouse.setColor(picked === 'mouse' ? '#111111' : '#cccccc').setBackgroundColor(picked === 'mouse' ? '#3fa9f5' : '#333333');
-    };
+    const parts = [this.add.text(0, y, 'Steer with:', { fontSize: '18px', color: '#cccccc' }).setOrigin(0, 0.5)];
+    const buttons = {};
+    CONTROLS.forEach(choice => {
+      buttons[choice] = this.add.text(0, y, labels[choice], style).setOrigin(0, 0.5).setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => pick(choice));
+      parts.push(buttons[choice]);
+    });
+    parts.push(this.add.text(0, y, '(C)', { fontSize: '16px', color: '#888888' }).setOrigin(0, 0.5));
+
+    // Line them all up across the middle of the screen.
+    const gap = 12;
+    let x = WIDTH / 2 - (parts.reduce((total, part) => total + part.width, 0) + gap * (parts.length - 1)) / 2;
+    parts.forEach(part => { part.x = x; x += part.width + gap; });
+
+    const show = () => CONTROLS.forEach(choice => {
+      const picked = choice === loadControls();
+      buttons[choice].setColor(picked ? '#111111' : '#cccccc').setBackgroundColor(picked ? '#3fa9f5' : '#333333');
+    });
     const pick = choice => { saveControls(choice); show(); };
-    keys.on('pointerdown', () => pick('keys'));
-    mouse.on('pointerdown', () => pick('mouse'));
-    this.input.keyboard.on('keydown-C', () => pick(loadControls() === 'mouse' ? 'keys' : 'mouse'));
+    this.input.keyboard.on('keydown-C', () => pick(CONTROLS[(CONTROLS.indexOf(loadControls()) + 1) % CONTROLS.length]));
     show();
   }
 
@@ -482,7 +496,8 @@ class GameScene extends Phaser.Scene {
     // Mouse: if the player picked the mouse on the start screen, the snake
     // heads toward the pointer (see steerToMouse). Pressing an arrow key
     // steers with the keys until the mouse moves again.
-    this.mouseSteering = !TOUCH && loadControls() === 'mouse';
+    this.controls = TOUCH ? 'swipe' : loadControls(); // picked on the start screen
+    this.mouseSteering = this.controls === 'mouse';
     if (this.mouseSteering) this.input.on('pointermove', () => { this.mouseSteering = true; });
   }
 
@@ -508,27 +523,24 @@ class GameScene extends Phaser.Scene {
   update() {
     this.spinScreen(); // see 3j
 
-    // The arrow keys steer your snake, or player 2's with two on one keyboard.
-    const arrowsPlayer = this.players.length === 2 && !this.online ? this.players[1] : this.me;
-    if (arrowsPlayer === this.me && (this.cursors.left.isDown || this.cursors.right.isDown || this.cursors.up.isDown || this.cursors.down.isDown)) {
-      this.mouseSteering = false;
-    }
-    if (this.players.length === 2 && (this.wasd.A.isDown || this.wasd.D.isDown || this.wasd.W.isDown || this.wasd.S.isDown)) {
-      this.mouseSteering = false;
-    }
+    // Which keys steer whom:
+    //  - 2 players on one keyboard: player 1 uses W A S D, player 2 the arrow keys
+    //  - otherwise, what was picked on the start screen. With the mouse
+    //    picked, the arrow keys still work until the mouse moves again.
+    const twoOnOne = this.players.length === 2 && !this.online;
+    const arrowsPlayer = twoOnOne ? this.players[1] : this.controls === 'wasd' ? null : this.me;
+    const wasdPlayer = twoOnOne ? this.players[0] : this.controls === 'wasd' ? this.me : null;
+    const steer = (player, left, right, up, down) => {
+      if (!player) return;
+      if (left.isDown || right.isDown || up.isDown || down.isDown) this.mouseSteering = false;
+      if (left.isDown) this.turn(player, -1, 0);
+      if (right.isDown) this.turn(player, 1, 0);
+      if (up.isDown) this.turn(player, 0, -1);
+      if (down.isDown) this.turn(player, 0, 1);
+    };
+    steer(arrowsPlayer, this.cursors.left, this.cursors.right, this.cursors.up, this.cursors.down);
+    steer(wasdPlayer, this.wasd.A, this.wasd.D, this.wasd.W, this.wasd.S);
     this.steerToMouse();
-    if (this.cursors.left.isDown) this.turn(arrowsPlayer, -1, 0);
-    if (this.cursors.right.isDown) this.turn(arrowsPlayer, 1, 0);
-    if (this.cursors.up.isDown) this.turn(arrowsPlayer, 0, -1);
-    if (this.cursors.down.isDown) this.turn(arrowsPlayer, 0, 1);
-
-    if (this.players.length === 2) {
-      const p1 = this.players[0];
-      if (this.wasd.A.isDown) this.turn(p1, -1, 0);
-      if (this.wasd.D.isDown) this.turn(p1, 1, 0);
-      if (this.wasd.W.isDown) this.turn(p1, 0, -1);
-      if (this.wasd.S.isDown) this.turn(p1, 0, 1);
-    }
   }
 
   // Used by the keys and swipes.
