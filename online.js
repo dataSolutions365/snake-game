@@ -220,7 +220,7 @@ function gameInfo() {
 // Host only: start a game with everyone in the room.
 function startGame() {
   if (!session || !session.isHost || session.players.length < 2) return;
-  session.room.update({ status: 'playing', inputs: null, state: null, result: null });
+  session.room.update({ status: 'playing', inputs: null, state: null, result: null, maze: null });
 }
 
 // Host only: the game ended. Everyone sees the result.
@@ -278,6 +278,31 @@ function sendState(state) {
     pops: state.pops.map(pop => pop.x + ',' + pop.y + ',' + pop.kind).join(';'),
     c: state.clock,
   });
+}
+
+// Host: send the maze (or null when it's gone). It only changes now and
+// then, so it goes in its own place instead of with every step.
+function sendMaze(maze) {
+  if (!session) return;
+  session.room.child('maze').set(maze ? {
+    left: maze.left, top: maze.top, w: maze.w, h: maze.h, sx: maze.sx, sy: maze.sy, until: maze.until,
+    walls: [...maze.walls].join(';'), a: maze.gapA.x + ',' + maze.gapA.y, b: maze.gapB.x + ',' + maze.gapB.y,
+  } : null);
+}
+
+// Everyone except the host: hear about mazes.
+function onMaze(callback) {
+  const ref = session.room.child('maze');
+  const handler = snap => {
+    const raw = snap.val();
+    if (!raw) { callback(null); return; }
+    callback({
+      left: raw.left, top: raw.top, w: raw.w, h: raw.h, sx: raw.sx, sy: raw.sy, until: raw.until,
+      walls: new Set(raw.walls.split(';')), gapA: unpackSpots(raw.a)[0], gapB: unpackSpots(raw.b)[0],
+    });
+  };
+  ref.on('value', handler);
+  return () => ref.off('value', handler);
 }
 
 // Everyone except the host: hear where everything is.
@@ -507,7 +532,7 @@ const Online = {
   hide: () => Screens.hideAll(),
   isHost: () => !!(session && session.isHost),
   inRoom: () => !!session,
-  sendTurn, onTurns, sendState, onState, endGame, backToRoom,
+  sendTurn, onTurns, sendState, onState, sendMaze, onMaze, endGame, backToRoom,
   // game.js fills these in.
   events: {
     onGameStart: () => {}, onGameOver: () => {}, onRoomClosed: () => {}, onExit: () => {}, onChat: () => {},

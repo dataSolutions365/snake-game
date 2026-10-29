@@ -42,14 +42,15 @@ const CRASH_COSTS = 5;            // points you lose for crashing online
 // online: true means a private room with friends on other devices (see online.js).
 // It only shows up once Firebase is set up in firebase-config.js.
 // powerUps: true means the power-up icons below show up in that mode.
+// mazes: true means mazes show up now and then (see MAZE_ settings below).
 // screens: how big the world is. 2 means 2 x 2 screens: you see one at a
 // time, and the view flips to the next when you go past the edge.
 // (2 players on one keyboard stay on 1 screen, so you can both see.)
 const MODES = {
-  easy:      { name: 'EASY',      about: 'Just you',        players: 1, computerSnakes: 0, food: 4,  powerUps: true, screens: 2 },
-  medium:    { name: 'MEDIUM',    about: 'Computer snakes', players: 1, computerSnakes: 5, food: 8,  powerUps: true, screens: 2 },
+  easy:      { name: 'EASY',      about: 'Just you',        players: 1, computerSnakes: 0, food: 4,  powerUps: true, screens: 2, mazes: true },
+  medium:    { name: 'MEDIUM',    about: 'Computer snakes', players: 1, computerSnakes: 5, food: 8,  powerUps: true, screens: 2, mazes: true },
   twoplayer: { name: '2 PLAYERS', about: 'WASD vs arrows',  players: 2, computerSnakes: 0, food: 2,  powerUps: true, screens: 1 },
-  online:    { name: 'ONLINE',    about: 'Private room',    online: true, computerSnakes: 0, food: 10, powerUps: true, screens: 2 },
+  online:    { name: 'ONLINE',    about: 'Private room',    online: true, computerSnakes: 0, food: 10, powerUps: true, screens: 2, mazes: true },
 };
 
 // Power-ups and power downs: icons that pop up on the board now and then.
@@ -68,13 +69,25 @@ const POWER_UPS = {
   flip:   { icon: '🌀', good: false, says: 'BACKWARDS!', about: 'Controls turn backwards' },
   spin:   { icon: '🌪️', good: false, says: 'SPIN!',      about: 'The screen spins around' },
   dark:   { icon: '🙈', good: false, says: 'LIGHTS OUT!', about: 'You only see right around you' },
+  // good: null means it could be either. It turns into one of the others at random.
+  mystery: { icon: '❓', good: null, says: '?',          about: 'Surprise! Could be good or bad' },
 };
 const POWER_UP_EVERY = 5000;     // milliseconds between new power-ups (on each screen)
 const POWER_UP_LASTS = 10000;    // milliseconds before an uneaten one disappears (it blinks first)
 const MAX_POWER_UPS = 3;         // most at once (on each screen)
 const POWER_UP_SIZE = 3;         // squares a star adds, or a skull takes away
 const EFFECT_LASTS = 5000;       // milliseconds all the others last
-const LIGHTS_OUT_SEE = 4;        // with lights out, how many squares around your head you can see
+const LIGHTS_OUT_SEE = 4;
+
+// Mazes: now and then a maze shows up on a screen nobody is on.
+// Hit one of its walls and you crash. Go in one gap and out the other
+// and you get the prize. Only in modes with mazes: true (they need a big world).
+const MAZE_ACROSS = 7;       // maze size in paths (the walls make it 2 x this + 1 squares)
+const MAZE_DOWN = 5;
+const MAZE_FIRST = 10000;    // milliseconds into the game before the first maze
+const MAZE_EVERY = 20000;    // milliseconds between one maze going and the next one coming
+const MAZE_LASTS = 45000;    // milliseconds a maze stays if nobody gets through (it blinks first)
+const MAZE_PRIZE = 10;       // squares longer and points for getting through        // with lights out, how many squares around your head you can see
 
 // Colors the player can pick for their snake. "head" is a lighter shade for the head.
 // To add a color, add a line here.
@@ -224,15 +237,17 @@ class StartScene extends Phaser.Scene {
   // opens a list of what every power-up and power down does.
   setupLegend() {
     const lines = ['POWER-UPS'];
-    Object.values(POWER_UPS).filter(pu => pu.good).forEach(pu => lines.push(pu.icon + '  ' + pu.about));
+    Object.values(POWER_UPS).filter(pu => pu.good === true).forEach(pu => lines.push(pu.icon + '  ' + pu.about));
     lines.push('', 'POWER DOWNS');
-    Object.values(POWER_UPS).filter(pu => !pu.good).forEach(pu => lines.push(pu.icon + '  ' + pu.about));
+    Object.values(POWER_UPS).filter(pu => pu.good === false).forEach(pu => lines.push(pu.icon + '  ' + pu.about));
+    Object.values(POWER_UPS).filter(pu => pu.good === null).forEach(pu => lines.push('', pu.icon + '  ' + pu.about));
+    lines.push('', '🧩  Mazes: find the orange on the map.', '    Hit a wall: crash. Get through: +' + MAZE_PRIZE + '!');
     lines.push('', 'All but ⭐ and 💀 last ' + EFFECT_LASTS / 1000 + ' seconds.', '', TOUCH ? 'Tap to close' : 'Click or press P to close');
 
     const box = this.add.container(0, 0).setDepth(10).setVisible(false);
     box.add(this.add.rectangle(0, 0, WIDTH, HEIGHT, 0x000000, 0.9).setOrigin(0).setInteractive());
     box.add(this.add.text(WIDTH / 2, HEIGHT / 2, lines.join('\n'), {
-      fontSize: PORTRAIT ? '18px' : '22px', color: '#ffffff', align: 'left', lineSpacing: 10,
+      fontSize: PORTRAIT ? '15px' : '19px', color: '#ffffff', align: 'left', lineSpacing: 6,
     }).setOrigin(0.5));
     const toggle = () => box.setVisible(!box.visible);
     box.list[0].on('pointerdown', toggle);
@@ -345,6 +360,8 @@ class GameScene extends Phaser.Scene {
     this.powerUpIcons = {};      // the emoji drawn on the board for each one
     this.pops = [];              // "+3", "FAST!" etc. to float up after this step
     this.nextPowerUpAt = POWER_UP_EVERY / 2;
+    this.maze = null;            // see 3k
+    this.nextMazeAt = MAZE_FIRST;
 
     // Computer snakes (see section 3h).
     // They get the computer colors in order, skipping the players' colors.
@@ -518,6 +535,7 @@ class GameScene extends Phaser.Scene {
         p.grow += 1;
       }
       this.takePowerUpAt(p);
+      this.checkMaze(p); // see 3k
     });
     this.updateScoreText();
 
@@ -525,6 +543,7 @@ class GameScene extends Phaser.Scene {
     if (fullStep) {
       this.moveComputerSnakes();
       this.updatePowerUps();
+      this.updateMaze();
     }
 
     // Online host: send everyone the new positions.
@@ -539,8 +558,10 @@ class GameScene extends Phaser.Scene {
   }
 
   // ----- 3d. Crash checks -----
+  // The edge of the world, or a maze wall (see 3k).
   hitsWall(spot) {
-    return spot.x < 0 || spot.x >= this.cols || spot.y < 0 || spot.y >= this.rows;
+    return spot.x < 0 || spot.x >= this.cols || spot.y < 0 || spot.y >= this.rows
+      || !!(this.maze && this.maze.walls.has(spot.x + ',' + spot.y));
   }
 
   // Is any player's snake on this square? The tail square of a snake
@@ -600,8 +621,10 @@ class GameScene extends Phaser.Scene {
   takePowerUpAt(p) {
     const i = this.powerUps.findIndex(pu => pu.x === p.body[0].x && pu.y === p.body[0].y);
     if (i === -1) return;
-    const kind = this.powerUps[i].kind;
+    let kind = this.powerUps[i].kind;
     this.powerUps.splice(i, 1);
+    // A surprise turns into one of the others.
+    if (kind === 'mystery') kind = Phaser.Utils.Array.GetRandom(Object.keys(POWER_UPS).filter(k => k !== 'mystery'));
     this.usePowerUp(p, kind);
     this.pops.push({ x: p.body[0].x, y: p.body[0].y, kind });
   }
@@ -639,7 +662,7 @@ class GameScene extends Phaser.Scene {
   // "+3", "FAST!" or "-3" floats up from where a power-up was taken.
   showPops(pops) {
     pops.forEach(pop => {
-      const info = POWER_UPS[pop.kind];
+      const info = pop.kind === 'maze' ? { says: 'MAZE BEATEN! +' + MAZE_PRIZE, good: true } : POWER_UPS[pop.kind];
       if (!info) return;
       const text = this.inWorld(this.add.text((pop.x + 0.5) * CELL, pop.y * CELL, info.says, {
         fontSize: '22px', fontStyle: 'bold', color: info.good ? '#7cfc00' : '#ff4444', stroke: '#000000', strokeThickness: 4,
@@ -652,6 +675,7 @@ class GameScene extends Phaser.Scene {
   draw() {
     this.graphics.clear();
     this.drawEdges(); // see 3j
+    this.drawMaze();  // see 3k
 
     // Power-ups: a green (good) or red (bad) glow, with the emoji on top.
     // Each emoji is its own text object, kept from one draw to the next.
@@ -660,7 +684,7 @@ class GameScene extends Phaser.Scene {
     this.powerUps.forEach(pu => {
       const info = POWER_UPS[pu.kind];
       if (!info) return;
-      g.fillStyle(info.good ? 0x7cfc00 : 0xff4444, 0.35);
+      g.fillStyle(info.good === null ? 0xffff66 : info.good ? 0x7cfc00 : 0xff4444, 0.35); // yellow for a surprise
       g.fillCircle(pu.x * CELL + CELL / 2, pu.y * CELL + CELL / 2, CELL * 0.75);
       const key = pu.x + ',' + pu.y + ',' + pu.kind;
       const icon = this.powerUpIcons[key] || this.inWorld(this.add.text(0, 0, info.icon, { fontSize: (CELL + 2) + 'px' }).setOrigin(0.5));
@@ -926,6 +950,7 @@ GameScene.prototype.startOnline = function () {
     }));
   } else {
     stops.push(Online.onState(state => this.applyOnlineState(state)));
+    stops.push(Online.onMaze(maze => this.setMaze(maze)));
   }
 
   // Chat messages pop up over the board for a few seconds.
@@ -1067,6 +1092,10 @@ GameScene.prototype.drawMiniMap = function () {
         m.fillStyle(0xffffff, 0.25);
         m.fillRect(left + sx * boxW, top + sy * boxH, boxW, boxH);
       }
+      if (this.maze && this.maze.sx === sx && this.maze.sy === sy) {
+        m.fillStyle(0xffa500, 0.7);
+        m.fillRect(left + sx * boxW + 4, top + sy * boxH + 4, boxW - 8, boxH - 8);
+      }
       m.lineStyle(1, 0x888888);
       m.strokeRect(left + sx * boxW, top + sy * boxH, boxW, boxH);
     }
@@ -1116,6 +1145,142 @@ GameScene.prototype.fatCells = function (p) {
     const d = i === 0 ? p.direction : { x: p.body[i - 1].x - part.x, y: p.body[i - 1].y - part.y };
     return { x: part.x - d.y, y: part.y + d.x };
   });
+};
+
+
+// =====================================================================
+//  3k. MAZES
+//  A maze is a block of walls with a gap on its left and right sides.
+//  hitsWall() (section 3d) counts its walls, so snakes crash into them
+//  and computer snakes steer around them.
+// =====================================================================
+
+// Every step: take the maze away when its time is up, or make a new one.
+GameScene.prototype.updateMaze = function () {
+  if (!this.mode.mazes || this.screens < 2) return;
+  if (this.maze && this.clock >= this.maze.until) this.setMaze(null);
+  if (!this.maze && this.clock >= this.nextMazeAt) this.makeMaze();
+};
+
+// Build a new maze in the middle of a screen that no player is on.
+GameScene.prototype.makeMaze = function () {
+  const w = MAZE_ACROSS * 2 + 1, h = MAZE_DOWN * 2 + 1;
+  const busy = this.players.filter(p => !p.crashed && p.body.length).map(p => this.screenOf(p.body[0]));
+  const free = [];
+  for (let sx = 0; sx < this.screens; sx++) {
+    for (let sy = 0; sy < this.screens; sy++) {
+      if (!busy.some(b => b.sx === sx && b.sy === sy)) free.push({ sx, sy });
+    }
+  }
+  if (!free.length || w > this.frameCols - 2 || h > this.frameRows - 2) {
+    this.nextMazeAt = this.clock + 2000; // try again soon
+    return;
+  }
+  const { sx, sy } = Phaser.Utils.Array.GetRandom(free);
+  const left = sx * this.frameCols + Math.floor((this.frameCols - w) / 2);
+  const top = sy * this.frameRows + Math.floor((this.frameRows - h) / 2);
+  const inside = spot => spot.x >= left && spot.x < left + w && spot.y >= top && spot.y < top + h;
+
+  // Don't drop it on top of a snake.
+  const snakes = [...this.players.filter(p => !p.crashed).map(p => p.body), ...this.computerSnakes.filter(cs => cs.alive).map(cs => cs.body)];
+  if (snakes.some(body => body.some(inside))) {
+    this.nextMazeAt = this.clock + 2000;
+    return;
+  }
+
+  // Start with every square a wall, then dig paths with a "random walk
+  // that backs up when it's stuck". Paths are on the odd squares.
+  const walls = new Set();
+  for (let x = 0; x < w; x++) for (let y = 0; y < h; y++) walls.add((left + x) + ',' + (top + y));
+  const dig = (x, y) => walls.delete((left + x) + ',' + (top + y));
+  const visited = new Set(['1,1']);
+  const path = [{ x: 1, y: 1 }];
+  dig(1, 1);
+  while (path.length) {
+    const at = path[path.length - 1];
+    const next = [{ x: 2, y: 0 }, { x: -2, y: 0 }, { x: 0, y: 2 }, { x: 0, y: -2 }]
+      .map(d => ({ x: at.x + d.x, y: at.y + d.y, d }))
+      .filter(n => n.x > 0 && n.x < w && n.y > 0 && n.y < h && !visited.has(n.x + ',' + n.y));
+    if (!next.length) { path.pop(); continue; }
+    const n = Phaser.Utils.Array.GetRandom(next);
+    dig(at.x + n.d.x / 2, at.y + n.d.y / 2); // knock down the wall in between
+    dig(n.x, n.y);
+    visited.add(n.x + ',' + n.y);
+    path.push({ x: n.x, y: n.y });
+  }
+
+  // A gap on the left side and one on the right.
+  const gapA = { x: left, y: top + 1 + 2 * Phaser.Math.Between(0, MAZE_DOWN - 1) };
+  const gapB = { x: left + w - 1, y: top + 1 + 2 * Phaser.Math.Between(0, MAZE_DOWN - 1) };
+  walls.delete(gapA.x + ',' + gapA.y);
+  walls.delete(gapB.x + ',' + gapB.y);
+
+  // Clear food and power-ups out of the walls.
+  this.foods = this.foods.map(f => walls.has(f.x + ',' + f.y) ? null : f).filter(Boolean);
+  this.leftovers = this.leftovers.filter(l => !walls.has(l.x + ',' + l.y));
+  this.powerUps = this.powerUps.filter(pu => !walls.has(pu.x + ',' + pu.y));
+  this.setMaze({ left, top, w, h, sx, sy, walls, gapA, gapB, until: this.clock + MAZE_LASTS });
+  while (this.foods.length < this.mode.food) this.foods.push(this.freeSpot());
+};
+
+// Put a maze on the board (or take it away with null). Online, the host
+// also sends it to everyone else.
+GameScene.prototype.setMaze = function (maze) {
+  const isNew = maze && !this.maze;
+  this.maze = maze;
+  if (!maze) {
+    this.nextMazeAt = this.clock + MAZE_EVERY;
+    this.players.forEach(p => { p.inMazeFrom = null; });
+  }
+  if (this.online && this.online.isHost) Online.sendMaze(maze);
+  if (isNew) this.showMessage('🧩 A maze appeared! Look for orange on the map');
+};
+
+// Did this player go in one gap and out the other?
+GameScene.prototype.checkMaze = function (p) {
+  const m = this.maze;
+  if (!m) return;
+  const head = p.body[0];
+  const onGap = gap => head.x === gap.x && head.y === gap.y;
+  const inside = head.x >= m.left && head.x < m.left + m.w && head.y >= m.top && head.y < m.top + m.h;
+  if (!inside) { p.inMazeFrom = null; return; }
+  if (onGap(m.gapA) || onGap(m.gapB)) {
+    const gap = onGap(m.gapA) ? 'A' : 'B';
+    if (p.inMazeFrom && p.inMazeFrom !== gap) {
+      // Made it through!
+      p.grow += MAZE_PRIZE;
+      p.score += MAZE_PRIZE;
+      this.pops.push({ x: head.x, y: head.y, kind: 'maze' });
+      this.setMaze(null);
+      return;
+    }
+    p.inMazeFrom = gap;
+  }
+};
+
+GameScene.prototype.drawMaze = function () {
+  const m = this.maze;
+  if (!m) return;
+  // Blink for the last 3 seconds before it goes.
+  if (m.until - this.clock < 3000 && Math.floor(this.clock / 240) % 2) return;
+  const g = this.graphics;
+  g.fillStyle(0xb5651d);
+  m.walls.forEach(key => {
+    const [x, y] = key.split(',').map(Number);
+    g.fillRect(x * CELL, y * CELL, CELL - 1, CELL - 1);
+  });
+  // The two gaps glow green.
+  g.fillStyle(0x7cfc00, 0.4);
+  [m.gapA, m.gapB].forEach(gap => g.fillRect(gap.x * CELL, gap.y * CELL, CELL - 1, CELL - 1));
+};
+
+// A message across the middle of the screen for a few seconds.
+GameScene.prototype.showMessage = function (text) {
+  const message = this.onHud(this.add.text(WIDTH / 2, 100, text, {
+    fontSize: '20px', color: '#ffa500', backgroundColor: '#000000cc', padding: { x: 10, y: 6 },
+    align: 'center', wordWrap: { width: WIDTH - 40 },
+  }).setOrigin(0.5, 0));
+  this.tweens.add({ targets: message, alpha: 0, delay: 3000, duration: 500, onComplete: () => message.destroy() });
 };
 
 
