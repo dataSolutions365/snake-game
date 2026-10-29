@@ -179,7 +179,7 @@ class StartScene extends Phaser.Scene {
 
     this.add.text(WIDTH / 2, HEIGHT / 2 - 225, 'SNAKE', { fontSize: '64px', color: '#7cfc00' }).setOrigin(0.5);
 
-    const howTo = TOUCH ? 'Swipe to steer' : 'Use the arrow keys to steer';
+    const howTo = TOUCH ? 'Swipe to steer' : 'Steer with the arrow keys or the mouse';
     this.add.text(WIDTH / 2, HEIGHT / 2 - 135, howTo + '\nEat the red food to grow\nDon\'t hit the walls or any snake!',
       { fontSize: '18px', color: '#cccccc', align: 'center', lineSpacing: 8 }).setOrigin(0.5);
 
@@ -427,6 +427,28 @@ class GameScene extends Phaser.Scene {
       if (Math.abs(dx) > Math.abs(dy)) this.turn(this.me, dx > 0 ? 1 : -1, 0);
       else this.turn(this.me, 0, dy > 0 ? 1 : -1);
     });
+
+    // Mouse: once you move the mouse, your snake heads toward the pointer
+    // (see steerToMouse). Pressing an arrow key switches back to the keys.
+    this.mouseSteering = false;
+    if (!TOUCH) this.input.on('pointermove', () => { this.mouseSteering = true; });
+  }
+
+  // Turn toward the mouse pointer: go whichever way it's furthest away
+  // (across or up/down). If that's straight back, go the other way round.
+  steerToMouse() {
+    const me = this.me;
+    if (!this.mouseSteering || !me || me.crashed || !me.body.length) return;
+    const pointer = this.input.activePointer;
+    const spot = this.cameras.main.getWorldPoint(pointer.x, pointer.y); // where the pointer is on the board
+    const dx = spot.x - (me.body[0].x + 0.5) * CELL;
+    const dy = spot.y - (me.body[0].y + 0.5) * CELL;
+    if (Math.abs(dx) < CELL / 2 && Math.abs(dy) < CELL / 2) return; // on the head already
+    const across = { x: Math.sign(dx), y: 0 }, upDown = { x: 0, y: Math.sign(dy) };
+    const [first, second] = Math.abs(dx) > Math.abs(dy) ? [across, upDown] : [upDown, across];
+    const backwards = d => d.x === -me.direction.x && d.y === -me.direction.y;
+    const pick = !backwards(first) ? first : (second.x || second.y) ? second : null;
+    if (pick) this.turn(me, pick.x, pick.y);
   }
 
   // Phaser calls update() about 60 times per second. We check the keys here.
@@ -436,6 +458,13 @@ class GameScene extends Phaser.Scene {
 
     // The arrow keys steer your snake, or player 2's with two on one keyboard.
     const arrowsPlayer = this.players.length === 2 && !this.online ? this.players[1] : this.me;
+    if (arrowsPlayer === this.me && (this.cursors.left.isDown || this.cursors.right.isDown || this.cursors.up.isDown || this.cursors.down.isDown)) {
+      this.mouseSteering = false;
+    }
+    if (this.players.length === 2 && (this.wasd.A.isDown || this.wasd.D.isDown || this.wasd.W.isDown || this.wasd.S.isDown)) {
+      this.mouseSteering = false;
+    }
+    this.steerToMouse();
     if (this.cursors.left.isDown) this.turn(arrowsPlayer, -1, 0);
     if (this.cursors.right.isDown) this.turn(arrowsPlayer, 1, 0);
     if (this.cursors.up.isDown) this.turn(arrowsPlayer, 0, -1);
