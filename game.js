@@ -49,6 +49,7 @@ const PLAYER_COLORS = [
 // Computer snakes use these, skipping whichever one the player picked.
 const COMPUTER_COLORS = [0x3fa9f5, 0xffa500, 0xb36bff, 0xff66cc, 0x00ced1]; // blue, orange, purple, pink, cyan
 const RESPAWN_AFTER = 3000;  // milliseconds before a crashed computer snake comes back
+const COMPUTER_MISSES_YOU = 0.25; // chance (0 to 1) a computer snake doesn't notice your body on a step
 
 // Touch screens get swipe controls instead of arrow keys.
 const TOUCH = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
@@ -422,20 +423,16 @@ GameScene.prototype.moveComputerSnakes = function () {
     ];
 
     // 2. Throw out any move that hits a wall or a snake.
+    //    Sometimes it doesn't notice your snake, so you can cut it off.
+    const seesYou = Math.random() >= COMPUTER_MISSES_YOU;
     const safe = options.filter(dir => {
       const spot = { x: head.x + dir.x, y: head.y + dir.y };
-      return !this.hitsWall(spot) && !this.isSnakeOn(spot);
+      return !this.hitsWall(spot) && !this.hitsComputerSnake(spot) && !(seesYou && this.hitsPlayer(spot));
     });
 
-    // Nowhere safe to go? It's boxed in and crashes. Every square of its
-    // body is left behind as a piece of food anyone can eat.
+    // Nowhere safe to go? It's boxed in and crashes.
     if (safe.length === 0) {
-      cs.alive = false;
-      cs.body.forEach(part => this.leftovers.push({ x: part.x, y: part.y, color: cs.color }));
-      this.time.delayedCall(RESPAWN_AFTER, () => {
-        this.computerSnakes.splice(this.computerSnakes.indexOf(cs), 1);
-        this.spawnComputerSnake(cs.color);
-      });
+      this.crashComputerSnake(cs);
       return;
     }
 
@@ -455,14 +452,32 @@ GameScene.prototype.moveComputerSnakes = function () {
     // unless it just ate.
     cs.direction = choice;
     const newHead = { x: head.x + choice.x, y: head.y + choice.y };
+
+    // Same rule as for you: run into another snake and you crash.
+    if (this.hitsPlayer(newHead)) {
+      this.crashComputerSnake(cs);
+      return;
+    }
+
     cs.body.unshift(newHead);
     if (!this.eatFoodAt(newHead)) cs.body.pop();
   });
 };
 
-// Is any snake (the player or a computer snake) on this square?
-GameScene.prototype.isSnakeOn = function (spot) {
-  return this.snake.some(part => part.x === spot.x && part.y === spot.y) || this.hitsComputerSnake(spot);
+// A crashed computer snake disappears, and every square of its body is
+// left behind as a piece of food anyone can eat. A new one comes later.
+GameScene.prototype.crashComputerSnake = function (cs) {
+  cs.alive = false;
+  cs.body.forEach(part => this.leftovers.push({ x: part.x, y: part.y, color: cs.color }));
+  this.time.delayedCall(RESPAWN_AFTER, () => {
+    this.computerSnakes.splice(this.computerSnakes.indexOf(cs), 1);
+    this.spawnComputerSnake(cs.color);
+  });
+};
+
+// Is the player's snake on this square?
+GameScene.prototype.hitsPlayer = function (spot) {
+  return this.snake.some(part => part.x === spot.x && part.y === spot.y);
 };
 
 // How many squares away is the closest piece of food?
