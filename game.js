@@ -7,6 +7,7 @@
 //    2. START SCREEN    the title screen you see first
 //    3. THE GAME        the snake, food, controls, score and computer snakes
 //       (3i covers online games; the rest of online play is in online.js)
+//       (3j covers the big world, the cameras, spin and lights out)
 //    4. GAME OVER       the screen after you crash
 //    5. START PHASER    joins the screens together and starts it all
 // =====================================================================
@@ -28,7 +29,7 @@ const WIDTH = COLS * CELL;
 const HEIGHT = ROWS * CELL;
 
 // Online, everyone's screen is a different shape, so all online games use
-// the same square board, shrunk to fit each screen.
+// the same square screens, shrunk to fit each device.
 const ONLINE_COLS = 30;
 const ONLINE_ROWS = 30;
 const ROUND_LENGTH = 120000;      // online rounds last 2 minutes (in milliseconds); highest score wins
@@ -41,11 +42,14 @@ const CRASH_COSTS = 5;            // points you lose for crashing online
 // online: true means a private room with friends on other devices (see online.js).
 // It only shows up once Firebase is set up in firebase-config.js.
 // powerUps: true means the power-up icons below show up in that mode.
+// screens: how big the world is. 2 means 2 x 2 screens: you see one at a
+// time, and the view flips to the next when you go past the edge.
+// (2 players on one keyboard stay on 1 screen, so you can both see.)
 const MODES = {
-  easy:      { name: 'EASY',      about: 'Just you',        players: 1, computerSnakes: 0, food: 1, powerUps: true },
-  medium:    { name: 'MEDIUM',    about: 'Computer snakes', players: 1, computerSnakes: 2, food: 3, powerUps: true },
-  twoplayer: { name: '2 PLAYERS', about: 'WASD vs arrows',  players: 2, computerSnakes: 0, food: 2, powerUps: true },
-  online:    { name: 'ONLINE',    about: 'Private room',    online: true, computerSnakes: 0, food: 3, powerUps: true },
+  easy:      { name: 'EASY',      about: 'Just you',        players: 1, computerSnakes: 0, food: 4,  powerUps: true, screens: 2 },
+  medium:    { name: 'MEDIUM',    about: 'Computer snakes', players: 1, computerSnakes: 5, food: 8,  powerUps: true, screens: 2 },
+  twoplayer: { name: '2 PLAYERS', about: 'WASD vs arrows',  players: 2, computerSnakes: 0, food: 2,  powerUps: true, screens: 1 },
+  online:    { name: 'ONLINE',    about: 'Private room',    online: true, computerSnakes: 0, food: 10, powerUps: true, screens: 2 },
 };
 
 // Power-ups and power downs: icons that pop up on the board now and then.
@@ -58,15 +62,19 @@ const POWER_UPS = {
   grow:   { icon: '⭐', good: true,  says: '+3',         about: 'Grow 3 longer, +3 points' },
   speed:  { icon: '⚡', good: true,  says: 'FAST!',      about: 'Go twice as fast' },
   ghost:  { icon: '👻', good: true,  says: 'GHOST!',     about: 'Slide through snakes' },
+  fat:    { icon: '🦖', good: true,  says: 'DINO!',      about: '2x wider: others crash into you' },
   shrink: { icon: '💀', good: false, says: '-3',         about: 'Shrink 3 shorter, -3 points' },
   slow:   { icon: '🐢', good: false, says: 'SLOW...',    about: 'Go half speed' },
   flip:   { icon: '🌀', good: false, says: 'BACKWARDS!', about: 'Controls turn backwards' },
+  spin:   { icon: '🌪️', good: false, says: 'SPIN!',      about: 'The screen spins around' },
+  dark:   { icon: '🙈', good: false, says: 'LIGHTS OUT!', about: 'You only see right around you' },
 };
-const POWER_UP_EVERY = 5000;     // milliseconds between new power-ups
+const POWER_UP_EVERY = 5000;     // milliseconds between new power-ups (on each screen)
 const POWER_UP_LASTS = 10000;    // milliseconds before an uneaten one disappears (it blinks first)
-const MAX_POWER_UPS = 3;         // most on the board at once
+const MAX_POWER_UPS = 3;         // most at once (on each screen)
 const POWER_UP_SIZE = 3;         // squares a star adds, or a skull takes away
-const EFFECT_LASTS = 5000;       // milliseconds speed, ghost, slow and backwards last
+const EFFECT_LASTS = 5000;       // milliseconds all the others last
+const LIGHTS_OUT_SEE = 4;        // with lights out, how many squares around your head you can see
 
 // Colors the player can pick for their snake. "head" is a lighter shade for the head.
 // To add a color, add a line here.
@@ -219,7 +227,7 @@ class StartScene extends Phaser.Scene {
     Object.values(POWER_UPS).filter(pu => pu.good).forEach(pu => lines.push(pu.icon + '  ' + pu.about));
     lines.push('', 'POWER DOWNS');
     Object.values(POWER_UPS).filter(pu => !pu.good).forEach(pu => lines.push(pu.icon + '  ' + pu.about));
-    lines.push('', 'Speed, ghost, slow and backwards', 'last ' + EFFECT_LASTS / 1000 + ' seconds.', '', TOUCH ? 'Tap to close' : 'Click or press P to close');
+    lines.push('', 'All but ⭐ and 💀 last ' + EFFECT_LASTS / 1000 + ' seconds.', '', TOUCH ? 'Tap to close' : 'Click or press P to close');
 
     const box = this.add.container(0, 0).setDepth(10).setVisible(false);
     box.add(this.add.rectangle(0, 0, WIDTH, HEIGHT, 0x000000, 0.9).setOrigin(0).setInteractive());
@@ -286,26 +294,25 @@ class GameScene extends Phaser.Scene {
     this.timer = null;
     this.lastSentTurn = null;
 
-    // The board size in squares. Online games use the shared square board.
-    this.cols = this.mode.online ? ONLINE_COLS : COLS;
-    this.rows = this.mode.online ? ONLINE_ROWS : ROWS;
+    // The size of one screen, and of the whole world, in squares.
+    // Online games use the shared square screens.
+    this.frameCols = this.mode.online ? ONLINE_COLS : COLS;
+    this.frameRows = this.mode.online ? ONLINE_ROWS : ROWS;
+    this.screens = this.mode.screens || 1;
+    this.cols = this.frameCols * this.screens;
+    this.rows = this.frameRows * this.screens;
 
     // A Graphics object is like a blank canvas we can draw shapes on.
-    // If the board is a different size from the screen, shrink it to fit
-    // and center it, with a line around the edge so you can see the walls.
+    // The board and snakes go on this one; the cameras (see 3j) decide
+    // which part of it you see.
     this.graphics = this.add.graphics();
-    if (this.cols !== COLS || this.rows !== ROWS) {
-      const scale = Math.min(1, WIDTH / (this.cols * CELL), (HEIGHT - 40) / (this.rows * CELL));
-      const x = (WIDTH - this.cols * CELL * scale) / 2;
-      const y = (HEIGHT - this.rows * CELL * scale) / 2 + 15;
-      this.add.rectangle(x, y, this.cols * CELL * scale, this.rows * CELL * scale).setOrigin(0).setStrokeStyle(2, 0x666666);
-      this.graphics.setPosition(x, y).setScale(scale);
-    }
+    this.fog = this.add.graphics().setDepth(5); // for lights out
+    this.setupCameras();
 
     // The players. Each one is a snake: a list of grid positions, item 0 is the head.
-    // With one player it starts in the middle. With two, player 1 starts at the
-    // top facing right and player 2 at the bottom facing left.
-    const midX = Math.floor(this.cols / 2), midY = Math.floor(this.rows / 2);
+    // With one player it starts in the middle of the first screen. With two,
+    // player 1 starts at the top facing right and player 2 at the bottom facing left.
+    const midX = Math.floor(this.frameCols / 2), midY = Math.floor(this.frameRows / 2);
     const colors = [PLAYER_COLORS[data.color], secondColor(data.color)];
     this.players = [];
     if (this.mode.online) {
@@ -321,7 +328,7 @@ class GameScene extends Phaser.Scene {
     if (!this.online) this.me = this.players[0];
 
     // Score, shown in the top-left corner.
-    this.scoreText = this.add.text(10, 10, '', { fontSize: '20px', color: '#ffffff' });
+    this.scoreText = this.onHud(this.add.text(10, 10, '', { fontSize: '20px', color: '#ffffff' }));
     this.updateScoreText();
 
     this.setupControls();
@@ -408,6 +415,8 @@ class GameScene extends Phaser.Scene {
   // Phaser calls update() about 60 times per second. We check the keys here.
   // We only remember the choice; the snake actually turns on its next step.
   update() {
+    this.spinScreen(); // see 3j
+
     // The arrow keys steer your snake, or player 2's with two on one keyboard.
     const arrowsPlayer = this.players.length === 2 && !this.online ? this.players[1] : this.me;
     if (this.cursors.left.isDown) this.turn(arrowsPlayer, -1, 0);
@@ -465,7 +474,7 @@ class GameScene extends Phaser.Scene {
       if (this.hitsWall(p.newHead)) return true;
       if (this.has(p, 'ghost')) return false;
       const headOn = alive.some(other => other !== p && !this.has(other, 'ghost') && other.newHead.x === p.newHead.x && other.newHead.y === p.newHead.y);
-      return this.hitsPlayer(p.newHead, alive) || this.hitsComputerSnake(p.newHead) || headOn;
+      return this.hitsPlayer(p.newHead, alive, p) || this.hitsComputerSnake(p.newHead) || headOn;
     });
     crashedNow.forEach(p => { p.crashed = true; });
 
@@ -502,6 +511,12 @@ class GameScene extends Phaser.Scene {
       } else {
         p.body.pop();
       }
+      // A dinosaur eats with the wide part of its head too.
+      const side = this.fatCells(p)[0];
+      if (side && this.eatFoodAt(side)) {
+        p.score += 1;
+        p.grow += 1;
+      }
       this.takePowerUpAt(p);
     });
     this.updateScoreText();
@@ -530,9 +545,11 @@ class GameScene extends Phaser.Scene {
 
   // Is any player's snake on this square? The tail square of a snake
   // that's moving is about to move out of the way, so it doesn't count.
-  hitsPlayer(spot, moving = this.players) {
+  // The wide part of a dinosaur counts too, except for the dinosaur itself (me).
+  hitsPlayer(spot, moving = this.players, me = null) {
+    const here = part => part.x === spot.x && part.y === spot.y;
     return this.players.some(p => !(this.online && p.crashed) && !this.has(p, 'ghost')
-      && (moving.includes(p) ? p.body.slice(0, -1) : p.body).some(part => part.x === spot.x && part.y === spot.y));
+      && ((moving.includes(p) ? p.body.slice(0, -1) : p.body).some(here) || (p !== me && this.fatCells(p).some(here))));
   }
 
   hitsComputerSnake(spot) {
@@ -600,8 +617,8 @@ class GameScene extends Phaser.Scene {
       p.body.splice(Math.max(2, p.body.length - POWER_UP_SIZE)); // never shorter than 2
       p.score = Math.max(0, p.score - POWER_UP_SIZE);
     }
-    // These last a few seconds. Speed and slow cancel each other out.
-    if (['speed', 'ghost', 'slow', 'flip'].includes(kind)) {
+    // All the others last a few seconds. Speed and slow cancel each other out.
+    if (kind !== 'grow' && kind !== 'shrink') {
       p.until[kind] = this.clock + EFFECT_LASTS;
       if (kind === 'speed') delete p.until.slow;
       if (kind === 'slow') delete p.until.speed;
@@ -612,21 +629,21 @@ class GameScene extends Phaser.Scene {
   updatePowerUps() {
     this.powerUps = this.powerUps.filter(pu => pu.until > this.clock);
     if (!this.mode.powerUps || this.clock < this.nextPowerUpAt) return;
-    this.nextPowerUpAt = this.clock + POWER_UP_EVERY;
-    if (this.powerUps.length >= MAX_POWER_UPS) return;
+    const screenCount = this.screens * this.screens;
+    this.nextPowerUpAt = this.clock + POWER_UP_EVERY / screenCount;
+    if (this.powerUps.length >= MAX_POWER_UPS * screenCount) return;
     const kind = Phaser.Utils.Array.GetRandom(Object.keys(POWER_UPS));
     this.powerUps.push({ ...this.freeSpot(), kind, until: this.clock + POWER_UP_LASTS });
   }
 
   // "+3", "FAST!" or "-3" floats up from where a power-up was taken.
   showPops(pops) {
-    const g = this.graphics;
     pops.forEach(pop => {
       const info = POWER_UPS[pop.kind];
       if (!info) return;
-      const text = this.add.text(g.x + (pop.x + 0.5) * CELL * g.scaleX, g.y + pop.y * CELL * g.scaleY, info.says, {
+      const text = this.inWorld(this.add.text((pop.x + 0.5) * CELL, pop.y * CELL, info.says, {
         fontSize: '22px', fontStyle: 'bold', color: info.good ? '#7cfc00' : '#ff4444', stroke: '#000000', strokeThickness: 4,
-      }).setOrigin(0.5);
+      }).setOrigin(0.5).setDepth(6));
       this.tweens.add({ targets: text, y: text.y - 40, alpha: 0, duration: 900, onComplete: () => text.destroy() });
     });
   }
@@ -634,6 +651,7 @@ class GameScene extends Phaser.Scene {
   // ----- 3f. Drawing -----
   draw() {
     this.graphics.clear();
+    this.drawEdges(); // see 3j
 
     // Power-ups: a green (good) or red (bad) glow, with the emoji on top.
     // Each emoji is its own text object, kept from one draw to the next.
@@ -645,9 +663,9 @@ class GameScene extends Phaser.Scene {
       g.fillStyle(info.good ? 0x7cfc00 : 0xff4444, 0.35);
       g.fillCircle(pu.x * CELL + CELL / 2, pu.y * CELL + CELL / 2, CELL * 0.75);
       const key = pu.x + ',' + pu.y + ',' + pu.kind;
-      const icon = this.powerUpIcons[key] || this.add.text(0, 0, info.icon, { fontSize: (CELL + 2) + 'px' }).setOrigin(0.5);
+      const icon = this.powerUpIcons[key] || this.inWorld(this.add.text(0, 0, info.icon, { fontSize: (CELL + 2) + 'px' }).setOrigin(0.5));
       delete this.powerUpIcons[key];
-      icon.setPosition(g.x + (pu.x + 0.5) * CELL * g.scaleX, g.y + (pu.y + 0.5) * CELL * g.scaleY).setScale(g.scaleX);
+      icon.setPosition((pu.x + 0.5) * CELL, (pu.y + 0.5) * CELL);
       // Blink for the last 2 seconds before it disappears.
       icon.setVisible(pu.until - this.clock > 2000 || Math.floor(this.clock / 240) % 2 === 0);
       icons[key] = icon;
@@ -688,9 +706,18 @@ class GameScene extends Phaser.Scene {
         // -1 leaves a thin gap so you can see each square.
         this.graphics.fillRect(part.x * CELL, part.y * CELL, CELL - 1, CELL - 1);
       });
+      // A dinosaur has a second row of squares down one side.
+      this.fatCells(p).forEach((part, i) => {
+        if (this.hitsWall(part)) return;
+        this.graphics.fillStyle(i === 0 ? head : p.color.body, alpha);
+        this.graphics.fillRect(part.x * CELL, part.y * CELL, CELL - 1, CELL - 1);
+      });
     });
 
     if (this.online) this.updateOutText(); // see 3i
+    this.drawLightsOut(); // see 3j
+    this.followMe();
+    this.drawMiniMap();
   }
 
   // ----- 3g. Game over -----
@@ -848,9 +875,14 @@ GameScene.prototype.setupOnlinePlayers = function (info) {
   this.online = info; // { myId, isHost, players: [{ id, name, color }] }
   info.players.forEach((p, i) => {
     // (online.js already made sure no two players share a color.)
-    const y = Math.floor(this.rows * (i + 1) / (info.players.length + 1));
-    const goingRight = i % 2 === 0;
-    const x = goingRight ? 5 : this.cols - 6;
+    // With a big world, everyone starts on their own screen.
+    const ownScreen = this.screens > 1 && info.players.length <= this.screens * this.screens;
+    const left = ownScreen ? (i % this.screens) * this.frameCols : 0;
+    const top = ownScreen ? Math.floor(i / this.screens) * this.frameRows : 0;
+    const y = ownScreen ? top + Math.floor(this.frameRows / 2) : Math.floor(this.rows * (i + 1) / (info.players.length + 1));
+    // On their own screens, snakes head away from each other, toward the outside wall.
+    const goingRight = ownScreen ? i % this.screens === this.screens - 1 : i % 2 === 0;
+    const x = ownScreen ? left + Math.floor(this.frameCols * (goingRight ? 1 : 2) / 3) : (goingRight ? 5 : this.cols - 6);
     const step = goingRight ? -1 : 1;
     const body = [{ x, y }, { x: x + step, y }, { x: x + 2 * step, y }];
     this.players.push(this.makePlayer(p.name, PLAYER_COLORS[p.color], body, { x: goingRight ? 1 : -1, y: 0 }, p.id));
@@ -933,8 +965,8 @@ GameScene.prototype.applyOnlineState = function (state) {
 GameScene.prototype.updateOutText = function () {
   if (!this.me) return;
   if (this.me.crashed && !this.outText) {
-    this.outText = this.add.text(WIDTH / 2, HEIGHT / 2, 'Crashed! -' + CRASH_COSTS + ' points\nBack in a moment...',
-      { fontSize: '26px', color: '#ffffff', backgroundColor: '#000000aa', padding: { x: 12, y: 8 }, align: 'center' }).setOrigin(0.5);
+    this.outText = this.onHud(this.add.text(WIDTH / 2, HEIGHT / 2, 'Crashed! -' + CRASH_COSTS + ' points\nBack in a moment...',
+      { fontSize: '26px', color: '#ffffff', backgroundColor: '#000000aa', padding: { x: 12, y: 8 }, align: 'center' }).setOrigin(0.5));
   }
   if (!this.me.crashed && this.outText) {
     this.outText.destroy();
@@ -944,11 +976,146 @@ GameScene.prototype.updateOutText = function () {
 
 GameScene.prototype.showChatBubble = function (msg) {
   const color = '#' + PLAYER_COLORS[(msg.color || 0) % PLAYER_COLORS.length].head.toString(16).padStart(6, '0');
-  const bubble = this.add.text(WIDTH / 2, 40, msg.name + ': ' + msg.text, {
+  const bubble = this.onHud(this.add.text(WIDTH / 2, 40, msg.name + ': ' + msg.text, {
     fontSize: '18px', color, backgroundColor: '#000000cc', padding: { x: 10, y: 6 },
     wordWrap: { width: WIDTH - 40 },
-  }).setOrigin(0.5, 0);
+  }).setOrigin(0.5, 0));
   this.tweens.add({ targets: bubble, alpha: 0, delay: 2500, duration: 500, onComplete: () => bubble.destroy() });
+};
+
+
+// =====================================================================
+//  3j. THE BIG WORLD, CAMERAS AND SCREEN EFFECTS
+//  The world can be several screens big. Two cameras look at it:
+//    - the main camera shows the screen your snake is on, and slides to
+//      the next one when you cross an edge (and spins with 🌪️)
+//    - the HUD camera shows the score, timer and mini-map, and never moves
+// =====================================================================
+
+GameScene.prototype.setupCameras = function () {
+  const frameW = this.frameCols * CELL, frameH = this.frameRows * CELL;
+  // Online, shrink the screen to fit the device, leaving room for the score.
+  const fits = frameW === WIDTH && frameH === HEIGHT;
+  const zoom = fits ? 1 : Math.min(1, WIDTH / frameW, (HEIGHT - 40) / frameH);
+  const x = (WIDTH - frameW * zoom) / 2;
+  const y = fits ? 0 : (HEIGHT - frameH * zoom) / 2 + 15;
+  this.cameras.main.setViewport(x, y, frameW * zoom, frameH * zoom).setZoom(zoom);
+  this.hudCamera = this.cameras.add(0, 0, WIDTH, HEIGHT);
+  this.hudCamera.ignore([this.graphics, this.fog]);
+  if (!fits) this.onHud(this.add.rectangle(x, y, frameW * zoom, frameH * zoom).setOrigin(0).setStrokeStyle(2, 0x666666));
+  this.miniMap = this.onHud(this.add.graphics());
+  this.screenShown = null;
+};
+
+// Things that belong to the HUD (stay put) or the world (move with the view).
+GameScene.prototype.onHud = function (thing) {
+  this.cameras.main.ignore(thing);
+  return thing;
+};
+GameScene.prototype.inWorld = function (thing) {
+  this.hudCamera.ignore(thing);
+  return thing;
+};
+
+// Which screen is this square on? Screens are numbered across, then down.
+GameScene.prototype.screenOf = function (spot) {
+  const sx = Phaser.Math.Clamp(Math.floor(spot.x / this.frameCols), 0, this.screens - 1);
+  const sy = Phaser.Math.Clamp(Math.floor(spot.y / this.frameRows), 0, this.screens - 1);
+  return { sx, sy };
+};
+
+// Point the main camera at the screen my snake's head is on.
+GameScene.prototype.followMe = function () {
+  if (!this.me || !this.me.body.length) return;
+  const { sx, sy } = this.screenOf(this.me.body[0]);
+  if (this.screenShown === sx + ',' + sy) return;
+  const cx = (sx + 0.5) * this.frameCols * CELL, cy = (sy + 0.5) * this.frameRows * CELL;
+  if (this.screenShown === null) this.cameras.main.centerOn(cx, cy);
+  else this.cameras.main.pan(cx, cy, 250, 'Sine.easeInOut');
+  this.screenShown = sx + ',' + sy;
+};
+
+// The edges: a gray wall around the outside of the world, and a faint
+// green line where you can go through to the next screen.
+GameScene.prototype.drawEdges = function () {
+  const g = this.graphics, w = this.cols * CELL, h = this.rows * CELL;
+  g.fillStyle(0x888888);
+  g.fillRect(0, 0, w, 3);
+  g.fillRect(0, h - 3, w, 3);
+  g.fillRect(0, 0, 3, h);
+  g.fillRect(w - 3, 0, 3, h);
+  g.fillStyle(0x7cfc00, 0.25);
+  for (let i = 1; i < this.screens; i++) {
+    g.fillRect(i * this.frameCols * CELL - 2, 0, 4, h);
+    g.fillRect(0, i * this.frameRows * CELL - 2, w, 4);
+  }
+};
+
+// The mini-map in the top-right corner: one box per screen, the one you're
+// on is lighter, and a dot for each player.
+GameScene.prototype.drawMiniMap = function () {
+  const m = this.miniMap;
+  m.clear();
+  if (this.screens < 2) return;
+  const boxW = 22, boxH = Math.round(22 * this.frameRows / this.frameCols);
+  const left = WIDTH - 10 - boxW * this.screens, top = 10;
+  m.fillStyle(0x000000, 0.6);
+  m.fillRect(left, top, boxW * this.screens, boxH * this.screens);
+  for (let sx = 0; sx < this.screens; sx++) {
+    for (let sy = 0; sy < this.screens; sy++) {
+      if (this.screenShown === sx + ',' + sy) {
+        m.fillStyle(0xffffff, 0.25);
+        m.fillRect(left + sx * boxW, top + sy * boxH, boxW, boxH);
+      }
+      m.lineStyle(1, 0x888888);
+      m.strokeRect(left + sx * boxW, top + sy * boxH, boxW, boxH);
+    }
+  }
+  this.players.filter(p => !p.crashed && p.body.length).forEach(p => {
+    m.fillStyle(p.color.head);
+    m.fillRect(left + p.body[0].x / this.cols * boxW * this.screens - 2, top + p.body[0].y / this.rows * boxH * this.screens - 2, 5, 5);
+  });
+};
+
+// Spin and lights out only happen on the screen of whoever took them.
+// (On one keyboard, the two players share a screen, so it's either of them.)
+GameScene.prototype.whoHas = function (kind) {
+  if (this.online) return this.me && !this.me.crashed && this.has(this.me, kind) ? this.me : null;
+  return this.players.find(p => this.has(p, kind)) || null;
+};
+
+// 🌪️ Called 60 times a second: turn the view a little, or turn it back to normal.
+GameScene.prototype.spinScreen = function () {
+  const cam = this.cameras.main;
+  if (this.whoHas('spin')) cam.setRotation(cam.rotation + 0.03);
+  else if (cam.rotation !== 0) {
+    cam.setRotation(Phaser.Math.Angle.RotateTo(Phaser.Math.Angle.Wrap(cam.rotation), 0, 0.1));
+    if (Math.abs(cam.rotation) < 0.01) cam.setRotation(0);
+  }
+};
+
+// 🙈 Cover everything except a small square around the head.
+GameScene.prototype.drawLightsOut = function () {
+  this.fog.clear();
+  const p = this.whoHas('dark');
+  if (!p) return;
+  const w = this.cols * CELL, h = this.rows * CELL;
+  const x0 = (p.body[0].x - LIGHTS_OUT_SEE) * CELL, y0 = (p.body[0].y - LIGHTS_OUT_SEE) * CELL;
+  const x1 = (p.body[0].x + LIGHTS_OUT_SEE + 1) * CELL, y1 = (p.body[0].y + LIGHTS_OUT_SEE + 1) * CELL;
+  this.fog.fillStyle(0x000000, 0.97);
+  this.fog.fillRect(0, 0, w, y0);         // above
+  this.fog.fillRect(0, y1, w, h - y1);    // below
+  this.fog.fillRect(0, y0, x0, y1 - y0);  // left
+  this.fog.fillRect(x1, y0, w - x1, y1 - y0); // right
+};
+
+// 🦖 The squares down one side of a dinosaur (the side to its right).
+GameScene.prototype.fatCells = function (p) {
+  if (!this.has(p, 'fat')) return [];
+  return p.body.map((part, i) => {
+    const d = i === 0 ? p.direction : { x: p.body[i - 1].x - part.x, y: p.body[i - 1].y - part.y };
+    return { x: part.x - d.y, y: part.y + d.x };
+  });
 };
 
 
