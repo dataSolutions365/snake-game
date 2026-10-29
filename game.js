@@ -31,18 +31,42 @@ const HEIGHT = ROWS * CELL;
 // the same square board, shrunk to fit each screen.
 const ONLINE_COLS = 30;
 const ONLINE_ROWS = 30;
+const ROUND_LENGTH = 120000;      // online rounds last 2 minutes (in milliseconds); highest score wins
+const PLAYER_RESPAWN_AFTER = 3000; // online, a crashed snake comes back after this long
+const CRASH_COSTS = 5;            // points you lose for crashing online
 
 // Game modes. The player picks one on the start screen.
 // To add a new mode (like HARD), copy one of these blocks and change the numbers.
 // players: 2 means two people on one keyboard (not shown on phones).
 // online: true means a private room with friends on other devices (see online.js).
 // It only shows up once Firebase is set up in firebase-config.js.
+// powerUps: true means the power-up icons below show up in that mode.
 const MODES = {
-  easy:      { name: 'EASY',      about: 'Just you',        players: 1, computerSnakes: 0, food: 1 },
-  medium:    { name: 'MEDIUM',    about: 'Computer snakes', players: 1, computerSnakes: 2, food: 3 },
-  twoplayer: { name: '2 PLAYERS', about: 'WASD vs arrows',  players: 2, computerSnakes: 0, food: 2 },
-  online:    { name: 'ONLINE',    about: 'Private room',    online: true, computerSnakes: 0, food: 3 },
+  easy:      { name: 'EASY',      about: 'Just you',        players: 1, computerSnakes: 0, food: 1, powerUps: true },
+  medium:    { name: 'MEDIUM',    about: 'Computer snakes', players: 1, computerSnakes: 2, food: 3, powerUps: true },
+  twoplayer: { name: '2 PLAYERS', about: 'WASD vs arrows',  players: 2, computerSnakes: 0, food: 2, powerUps: true },
+  online:    { name: 'ONLINE',    about: 'Private room',    online: true, computerSnakes: 0, food: 3, powerUps: true },
 };
+
+// Power-ups and power downs: icons that pop up on the board now and then.
+// Run over one to use it. Good ones have a green glow, bad ones a red glow.
+//   says:  floats up when you take it
+//   about: the line in the legend on the start screen
+// What each one does is in usePowerUp() (section 3e). To add one, add a line
+// here and a matching part there.
+const POWER_UPS = {
+  grow:   { icon: '⭐', good: true,  says: '+3',         about: 'Grow 3 longer, +3 points' },
+  speed:  { icon: '⚡', good: true,  says: 'FAST!',      about: 'Go twice as fast' },
+  ghost:  { icon: '👻', good: true,  says: 'GHOST!',     about: 'Slide through snakes' },
+  shrink: { icon: '💀', good: false, says: '-3',         about: 'Shrink 3 shorter, -3 points' },
+  slow:   { icon: '🐢', good: false, says: 'SLOW...',    about: 'Go half speed' },
+  flip:   { icon: '🌀', good: false, says: 'BACKWARDS!', about: 'Controls turn backwards' },
+};
+const POWER_UP_EVERY = 5000;     // milliseconds between new power-ups
+const POWER_UP_LASTS = 10000;    // milliseconds before an uneaten one disappears (it blinks first)
+const MAX_POWER_UPS = 3;         // most on the board at once
+const POWER_UP_SIZE = 3;         // squares a star adds, or a skull takes away
+const EFFECT_LASTS = 5000;       // milliseconds speed, ghost, slow and backwards last
 
 // Colors the player can pick for their snake. "head" is a lighter shade for the head.
 // To add a color, add a line here.
@@ -139,6 +163,7 @@ class StartScene extends Phaser.Scene {
       { fontSize: '18px', color: '#cccccc', align: 'center', lineSpacing: 8 }).setOrigin(0.5);
 
     this.setupColorPicker(HEIGHT / 2 - 35);
+    this.setupLegend();
 
     // Leaderboard button in the top-right corner (once Firebase is set up). Keyboard: L
     if (Leaderboard.available()) {
@@ -167,7 +192,7 @@ class StartScene extends Phaser.Scene {
       const y = PORTRAIT ? HEIGHT / 2 + 75 + i * 100 : HEIGHT / 2 + 80 + row * 105;
       // Tell the game which mode, and which color the player picked.
       const start = () => {
-        if (Leaderboard.isOpen()) return; // the leaderboard is showing on top
+        if (Leaderboard.isOpen() || this.legend.visible) return; // something is showing on top
         if (mode.online) this.scene.start('OnlineMenu', { color: this.colorChoice });
         else this.scene.start('Game', { mode: key, color: this.colorChoice });
       };
@@ -185,6 +210,29 @@ class StartScene extends Phaser.Scene {
   // color up to date as player 1 picks theirs.
   update() {
     if (this.p2Label) this.p2Label.setText('P2 is ' + secondColor(this.colorChoice).name);
+  }
+
+  // The power-up legend: a "?" button in the top-left corner (keyboard: P)
+  // opens a list of what every power-up and power down does.
+  setupLegend() {
+    const lines = ['POWER-UPS'];
+    Object.values(POWER_UPS).filter(pu => pu.good).forEach(pu => lines.push(pu.icon + '  ' + pu.about));
+    lines.push('', 'POWER DOWNS');
+    Object.values(POWER_UPS).filter(pu => !pu.good).forEach(pu => lines.push(pu.icon + '  ' + pu.about));
+    lines.push('', 'Speed, ghost, slow and backwards', 'last ' + EFFECT_LASTS / 1000 + ' seconds.', '', TOUCH ? 'Tap to close' : 'Click or press P to close');
+
+    const box = this.add.container(0, 0).setDepth(10).setVisible(false);
+    box.add(this.add.rectangle(0, 0, WIDTH, HEIGHT, 0x000000, 0.9).setOrigin(0).setInteractive());
+    box.add(this.add.text(WIDTH / 2, HEIGHT / 2, lines.join('\n'), {
+      fontSize: PORTRAIT ? '18px' : '22px', color: '#ffffff', align: 'left', lineSpacing: 10,
+    }).setOrigin(0.5));
+    const toggle = () => box.setVisible(!box.visible);
+    box.list[0].on('pointerdown', toggle);
+
+    this.add.text(10, 10, '⭐ Power-ups', { fontSize: '18px', color: '#111111', backgroundColor: '#7cfc00', padding: { x: 8, y: 6 } })
+      .setInteractive({ useHandCursor: true }).on('pointerdown', toggle);
+    this.input.keyboard.on('keydown-P', toggle);
+    this.legend = box;
   }
 
   // A row of colored squares. Click or tap one to pick it (on a computer,
@@ -234,6 +282,7 @@ class GameScene extends Phaser.Scene {
     this.mode = MODES[data.mode];
     this.colorChoice = data.color;
     this.online = null;        // filled in for online games (see 3i)
+    this.outText = null;       // "Crashed!" message, online
     this.timer = null;
     this.lastSentTurn = null;
 
@@ -283,16 +332,24 @@ class GameScene extends Phaser.Scene {
     this.leftovers = []; // pieces of crashed computer snakes, free to eat (see 3h)
     for (let i = 0; i < this.mode.food; i++) this.foods.push(this.freeSpot());
 
+    // Power-ups (see 3e). "clock" counts the milliseconds the game has run.
+    this.clock = 0;
+    this.powerUps = [];          // { x, y, kind, until }
+    this.powerUpIcons = {};      // the emoji drawn on the board for each one
+    this.pops = [];              // "+3", "FAST!" etc. to float up after this step
+    this.nextPowerUpAt = POWER_UP_EVERY / 2;
+
     // Computer snakes (see section 3h).
     // They get the computer colors in order, skipping the players' colors.
     const computerColors = COMPUTER_COLORS.filter(c => !this.players.some(p => p.color.body === c));
     for (let i = 0; i < this.mode.computerSnakes; i++) this.spawnComputerSnake(computerColors[i % computerColors.length]);
 
     // Run step() over and over on a timer, instead of every frame,
-    // so the snakes move one square at a time.
+    // so the snakes move one square at a time. It runs twice as often as
+    // a normal snake moves, so a sped-up snake can move on every tick.
     // Online, only the host runs the game; everyone else draws what the host sends (see 3i).
     if (!this.online || this.online.isHost) {
-      this.timer = this.time.addEvent({ delay: MOVE_EVERY, loop: true, callback: this.step, callbackScope: this });
+      this.timer = this.time.addEvent({ delay: MOVE_EVERY / 2, loop: true, callback: this.step, callbackScope: this });
     }
     if (this.online) this.startOnline();
 
@@ -307,12 +364,24 @@ class GameScene extends Phaser.Scene {
       nextDirection: direction, // the way the player last pressed
       score: 0,
       crashed: false,
+      grow: 0,                 // squares still to grow (from a star)
+      until: {},               // power-ups that last a while: { speed: when it ends, ... }
     };
+  }
+
+  // Is this player sped up, a ghost, slowed down or backwards right now?
+  has(player, kind) {
+    return (player.until[kind] || 0) > this.clock;
   }
 
   updateScoreText() {
     if (this.players.length === 1) this.scoreText.setText('Score: ' + this.players[0].score);
-    else this.scoreText.setText(this.players.map(p => p.name + ': ' + (p.crashed ? 'out' : p.score)).join('    '));
+    else this.scoreText.setText(this.players.map(p => p.name + ': ' + (p.crashed && !this.online ? 'out' : p.score)).join('    '));
+    // Online: how long is left in the round.
+    if (this.online) {
+      const secondsLeft = Math.max(0, Math.ceil((ROUND_LENGTH - this.clock) / 1000));
+      this.scoreText.setText('⏱ ' + Math.floor(secondsLeft / 60) + ':' + String(secondsLeft % 60).padStart(2, '0') + '    ' + this.scoreText.text);
+    }
   }
 
   // ----- 3b. Controls -----
@@ -358,6 +427,7 @@ class GameScene extends Phaser.Scene {
   // Used by the keys and swipes.
   turn(player, x, y) {
     if (!player || player.crashed) return;
+    if (!this.online && this.has(player, 'flip')) { x = -x; y = -y; } // backwards! (online, the host flips it)
     // Don't let the snake turn straight back into itself.
     if (x === -player.direction.x && y === -player.direction.y) return;
     // Online and not the host: ask the host to turn us (only when it changes,
@@ -373,9 +443,16 @@ class GameScene extends Phaser.Scene {
 
   // ----- 3c. Movement: one step of the game -----
   step() {
-    const alive = this.players.filter(p => !p.crashed);
+    // Every other tick is a normal step. On the ones in between, only
+    // sped-up snakes move. Slowed-down snakes move every fourth tick.
+    this.clock += MOVE_EVERY / 2;
+    const fullStep = this.clock % MOVE_EVERY === 0;
+    const slowStep = this.clock % (MOVE_EVERY * 2) === 0;
+    const alive = this.players.filter(p => !p.crashed
+      && (this.has(p, 'speed') || (this.has(p, 'slow') ? slowStep : fullStep)));
+    if (alive.length === 0 && !fullStep) return; // nobody moves this tick
 
-    // First work out where every player's new head goes:
+    // First work out where every moving player's new head goes:
     // one square in their current direction.
     alive.forEach(p => {
       p.direction = p.nextDirection;
@@ -383,48 +460,67 @@ class GameScene extends Phaser.Scene {
     });
 
     // Then check who crashed: into a wall, any snake, or (with two players)
-    // head-on into another player's head.
+    // head-on into another player's head. Ghosts only crash into walls.
     const crashedNow = alive.filter(p => {
-      const headOn = alive.some(other => other !== p && other.newHead.x === p.newHead.x && other.newHead.y === p.newHead.y);
-      return this.hitsWall(p.newHead) || this.hitsPlayer(p.newHead) || this.hitsComputerSnake(p.newHead) || headOn;
+      if (this.hitsWall(p.newHead)) return true;
+      if (this.has(p, 'ghost')) return false;
+      const headOn = alive.some(other => other !== p && !this.has(other, 'ghost') && other.newHead.x === p.newHead.x && other.newHead.y === p.newHead.y);
+      return this.hitsPlayer(p.newHead, alive) || this.hitsComputerSnake(p.newHead) || headOn;
     });
     crashedNow.forEach(p => { p.crashed = true; });
 
     if (this.online) {
-      // Online, a crashed player is out and their snake turns into food.
-      // The game goes on until only one is left.
+      // Online, a crashed player's snake turns into food, they lose some
+      // points, and they come back a few seconds later (see respawnPlayers).
+      // The round ends when the time runs out.
       crashedNow.forEach(p => {
         p.body.forEach(part => this.leftovers.push({ x: part.x, y: part.y, color: p.color.body }));
+        p.score = Math.max(0, p.score - CRASH_COSTS);
+        p.respawnAt = this.clock + PLAYER_RESPAWN_AFTER;
+        p.until = {};
+        p.grow = 0;
       });
-      if (this.players.filter(p => !p.crashed).length <= 1) {
+      if (this.clock >= ROUND_LENGTH) {
         this.gameOver();
         return;
       }
+      if (fullStep) this.respawnPlayers();
     } else if (crashedNow.length > 0) {
       this.gameOver();
       return;
     }
 
     // Moving = add a new head at the front, remove the last tail square.
-    this.players.filter(p => !p.crashed).forEach(p => {
+    alive.filter(p => !p.crashed).forEach(p => {
       p.body.unshift(p.newHead);
       if (this.eatFoodAt(p.newHead)) {
         // Ate the food! Skipping pop() leaves the tail where it was,
         // so the snake ends up one square longer.
         p.score += 1;
+      } else if (p.grow > 0) {
+        p.grow -= 1; // still growing from a star: keep the tail too
       } else {
         p.body.pop();
       }
+      this.takePowerUpAt(p);
     });
     this.updateScoreText();
 
-    // Now the computer snakes take their step.
-    this.moveComputerSnakes();
+    // Now the computer snakes take their step, and power-ups come and go.
+    if (fullStep) {
+      this.moveComputerSnakes();
+      this.updatePowerUps();
+    }
 
     // Online host: send everyone the new positions.
-    if (this.online) Online.sendState({ players: this.players, foods: this.foods, leftovers: this.leftovers });
+    if (this.online) {
+      Online.sendState({ players: this.players, foods: this.foods, leftovers: this.leftovers,
+        powerUps: this.powerUps, pops: this.pops, clock: this.clock });
+    }
 
     this.draw();
+    this.showPops(this.pops);
+    this.pops = [];
   }
 
   // ----- 3d. Crash checks -----
@@ -432,10 +528,11 @@ class GameScene extends Phaser.Scene {
     return spot.x < 0 || spot.x >= this.cols || spot.y < 0 || spot.y >= this.rows;
   }
 
-  // Is any player's snake on this square? Each tail square is about to move
-  // out of the way, so it doesn't count.
-  hitsPlayer(spot) {
-    return this.players.some(p => !(this.online && p.crashed) && p.body.slice(0, -1).some(part => part.x === spot.x && part.y === spot.y));
+  // Is any player's snake on this square? The tail square of a snake
+  // that's moving is about to move out of the way, so it doesn't count.
+  hitsPlayer(spot, moving = this.players) {
+    return this.players.some(p => !(this.online && p.crashed) && !this.has(p, 'ghost')
+      && (moving.includes(p) ? p.body.slice(0, -1) : p.body).some(part => part.x === spot.x && part.y === spot.y));
   }
 
   hitsComputerSnake(spot) {
@@ -447,7 +544,8 @@ class GameScene extends Phaser.Scene {
     const allBodies = [...this.players.filter(p => !(this.online && p.crashed)).map(p => p.body), ...this.computerSnakes.filter(cs => cs.alive).map(cs => cs.body)];
     return allBodies.some(body => body.some(part => part.x === spot.x && part.y === spot.y))
       || (this.foods || []).some(food => food.x === spot.x && food.y === spot.y)
-      || (this.leftovers || []).some(piece => piece.x === spot.x && piece.y === spot.y);
+      || (this.leftovers || []).some(piece => piece.x === spot.x && piece.y === spot.y)
+      || (this.powerUps || []).some(pu => pu.x === spot.x && pu.y === spot.y);
   }
 
   // ----- 3e. Food -----
@@ -481,9 +579,81 @@ class GameScene extends Phaser.Scene {
     return false;
   }
 
+  // Power-ups: did this player just run over one?
+  takePowerUpAt(p) {
+    const i = this.powerUps.findIndex(pu => pu.x === p.body[0].x && pu.y === p.body[0].y);
+    if (i === -1) return;
+    const kind = this.powerUps[i].kind;
+    this.powerUps.splice(i, 1);
+    this.usePowerUp(p, kind);
+    this.pops.push({ x: p.body[0].x, y: p.body[0].y, kind });
+  }
+
+  // What each power-up does.
+  usePowerUp(p, kind) {
+    if (kind === 'grow') {
+      p.grow += POWER_UP_SIZE;   // grows over the next few steps
+      p.score += POWER_UP_SIZE;
+    }
+    if (kind === 'shrink') {
+      p.grow = 0;
+      p.body.splice(Math.max(2, p.body.length - POWER_UP_SIZE)); // never shorter than 2
+      p.score = Math.max(0, p.score - POWER_UP_SIZE);
+    }
+    // These last a few seconds. Speed and slow cancel each other out.
+    if (['speed', 'ghost', 'slow', 'flip'].includes(kind)) {
+      p.until[kind] = this.clock + EFFECT_LASTS;
+      if (kind === 'speed') delete p.until.slow;
+      if (kind === 'slow') delete p.until.speed;
+    }
+  }
+
+  // Old power-ups disappear; now and then a new one shows up.
+  updatePowerUps() {
+    this.powerUps = this.powerUps.filter(pu => pu.until > this.clock);
+    if (!this.mode.powerUps || this.clock < this.nextPowerUpAt) return;
+    this.nextPowerUpAt = this.clock + POWER_UP_EVERY;
+    if (this.powerUps.length >= MAX_POWER_UPS) return;
+    const kind = Phaser.Utils.Array.GetRandom(Object.keys(POWER_UPS));
+    this.powerUps.push({ ...this.freeSpot(), kind, until: this.clock + POWER_UP_LASTS });
+  }
+
+  // "+3", "FAST!" or "-3" floats up from where a power-up was taken.
+  showPops(pops) {
+    const g = this.graphics;
+    pops.forEach(pop => {
+      const info = POWER_UPS[pop.kind];
+      if (!info) return;
+      const text = this.add.text(g.x + (pop.x + 0.5) * CELL * g.scaleX, g.y + pop.y * CELL * g.scaleY, info.says, {
+        fontSize: '22px', fontStyle: 'bold', color: info.good ? '#7cfc00' : '#ff4444', stroke: '#000000', strokeThickness: 4,
+      }).setOrigin(0.5);
+      this.tweens.add({ targets: text, y: text.y - 40, alpha: 0, duration: 900, onComplete: () => text.destroy() });
+    });
+  }
+
   // ----- 3f. Drawing -----
   draw() {
     this.graphics.clear();
+
+    // Power-ups: a green (good) or red (bad) glow, with the emoji on top.
+    // Each emoji is its own text object, kept from one draw to the next.
+    const g = this.graphics;
+    const icons = {};
+    this.powerUps.forEach(pu => {
+      const info = POWER_UPS[pu.kind];
+      if (!info) return;
+      g.fillStyle(info.good ? 0x7cfc00 : 0xff4444, 0.35);
+      g.fillCircle(pu.x * CELL + CELL / 2, pu.y * CELL + CELL / 2, CELL * 0.75);
+      const key = pu.x + ',' + pu.y + ',' + pu.kind;
+      const icon = this.powerUpIcons[key] || this.add.text(0, 0, info.icon, { fontSize: (CELL + 2) + 'px' }).setOrigin(0.5);
+      delete this.powerUpIcons[key];
+      icon.setPosition(g.x + (pu.x + 0.5) * CELL * g.scaleX, g.y + (pu.y + 0.5) * CELL * g.scaleY).setScale(g.scaleX);
+      // Blink for the last 2 seconds before it disappears.
+      icon.setVisible(pu.until - this.clock > 2000 || Math.floor(this.clock / 240) % 2 === 0);
+      icons[key] = icon;
+    });
+    Object.values(this.powerUpIcons).forEach(icon => icon.destroy()); // ones that are gone
+    this.powerUpIcons = icons;
 
     // Food: red squares.
     this.graphics.fillStyle(0xff4444);
@@ -504,14 +674,23 @@ class GameScene extends Phaser.Scene {
     });
 
     // Players' snakes, in their colors. The head is a lighter shade.
+    // While a power-up is working: sped up, the head flashes white;
+    // a ghost is see-through; slowed down or backwards, the head flashes red.
     // (Online, a player who's out has already turned into leftovers.)
+    const flash = Math.floor(this.clock / MOVE_EVERY) % 2 === 0;
     this.players.filter(p => !(this.online && p.crashed)).forEach(p => {
+      let head = p.color.head;
+      if (flash && this.has(p, 'speed')) head = 0xffffff;
+      if (flash && (this.has(p, 'slow') || this.has(p, 'flip'))) head = 0xff4444;
+      const alpha = this.has(p, 'ghost') ? 0.4 : 1;
       p.body.forEach((part, i) => {
-        this.graphics.fillStyle(i === 0 ? p.color.head : p.color.body);
+        this.graphics.fillStyle(i === 0 ? head : p.color.body, alpha);
         // -1 leaves a thin gap so you can see each square.
         this.graphics.fillRect(part.x * CELL, part.y * CELL, CELL - 1, CELL - 1);
       });
     });
+
+    if (this.online) this.updateOutText(); // see 3i
   }
 
   // ----- 3g. Game over -----
@@ -521,8 +700,11 @@ class GameScene extends Phaser.Scene {
 
     // Online, the host tells everyone the result, and every screen
     // (including the host's) switches to game over when it arrives.
+    // The highest score wins. A tie for first is a draw.
     if (this.online) {
-      const winner = this.players.find(p => !p.crashed);
+      const best = Math.max(...this.players.map(p => p.score));
+      const top = this.players.filter(p => p.score === best);
+      const winner = top.length === 1 ? top[0] : null;
       this.draw();
       Online.endGame({
         winner: winner ? winner.name : null,
@@ -631,6 +813,8 @@ GameScene.prototype.moveComputerSnakes = function () {
 
     cs.body.unshift(newHead);
     if (!this.eatFoodAt(newHead)) cs.body.pop();
+    // Computer snakes gobble up power-ups too, but they do nothing for them.
+    this.powerUps = this.powerUps.filter(pu => pu.x !== newHead.x || pu.y !== newHead.y);
   });
 };
 
@@ -674,12 +858,36 @@ GameScene.prototype.setupOnlinePlayers = function (info) {
   this.me = this.players.find(p => p.id === info.myId);
 };
 
+// Host: bring back crashed players once they've waited long enough.
+// They get a new 3-square snake somewhere empty, away from everyone else,
+// heading toward the middle of the board.
+GameScene.prototype.respawnPlayers = function () {
+  this.players.filter(p => p.crashed && this.clock >= p.respawnAt).forEach(p => {
+    for (let tries = 0; tries < 200; tries++) {
+      const head = this.freeSpot();
+      const dir = head.x < this.cols / 2 ? { x: 1, y: 0 } : { x: -1, y: 0 };
+      const body = [head, { x: head.x - dir.x, y: head.y }, { x: head.x - 2 * dir.x, y: head.y }];
+      const farFromOthers = this.players.every(o => o === p || o.crashed
+        || Math.abs(head.x - o.body[0].x) + Math.abs(head.y - o.body[0].y) > 6);
+      if (farFromOthers && !this.hitsWall(body[2]) && !this.isTaken(body[1]) && !this.isTaken(body[2])) {
+        p.body = body;
+        p.direction = dir;
+        p.nextDirection = dir;
+        p.crashed = false;
+        return;
+      }
+    }
+    // Board too crowded: try again next step.
+  });
+};
+
 // Start listening: the host hears everyone's turns; everyone else hears the game state.
 GameScene.prototype.startOnline = function () {
   const stops = [];
   if (this.online.isHost) {
     stops.push(Online.onTurns((id, x, y) => {
       const player = this.players.find(p => p.id === id);
+      if (player && this.has(player, 'flip')) { x = -x; y = -y; } // backwards!
       if (player && !player.crashed && !(x === -player.direction.x && y === -player.direction.y)) {
         player.nextDirection = { x, y };
       }
@@ -697,7 +905,6 @@ GameScene.prototype.startOnline = function () {
     Online.events.onChat = () => {};
   });
 
-  this.outText = null;
 };
 
 // Everyone except the host: copy what the host sent, then draw it.
@@ -708,17 +915,30 @@ GameScene.prototype.applyOnlineState = function (state) {
     p.body = sent.body;
     p.score = sent.score;
     p.crashed = sent.crashed;
+    p.until = sent.until;
     // Work out which way it's going from its first two squares,
     // so we don't let you ask to turn straight back.
     if (p.body.length > 1) p.direction = { x: p.body[0].x - p.body[1].x, y: p.body[0].y - p.body[1].y };
   });
   this.foods = state.foods;
   this.leftovers = state.leftovers;
+  this.powerUps = state.powerUps;
+  this.clock = state.clock;
   this.updateScoreText();
   this.draw();
+  this.showPops(state.pops);
+};
 
-  if (this.me && this.me.crashed && !this.outText) {
-    this.outText = this.add.text(WIDTH / 2, HEIGHT / 2, "You're out! Watching...", { fontSize: '26px', color: '#ffffff', backgroundColor: '#000000aa', padding: { x: 12, y: 8 } }).setOrigin(0.5);
+// Online: a message in the middle of the screen while you're waiting to come back.
+GameScene.prototype.updateOutText = function () {
+  if (!this.me) return;
+  if (this.me.crashed && !this.outText) {
+    this.outText = this.add.text(WIDTH / 2, HEIGHT / 2, 'Crashed! -' + CRASH_COSTS + ' points\nBack in a moment...',
+      { fontSize: '26px', color: '#ffffff', backgroundColor: '#000000aa', padding: { x: 12, y: 8 }, align: 'center' }).setOrigin(0.5);
+  }
+  if (!this.me.crashed && this.outText) {
+    this.outText.destroy();
+    this.outText = null;
   }
 };
 

@@ -37,6 +37,9 @@ const MAX_PLAYERS = 4;
 const CODE_LETTERS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O or 1/I/L, they look alike
 const QUICK_CHAT = ['Good game!', 'Rematch?', 'Nice move!', 'Oops!', 'Hi!', 'Ready!', '😂', '😎', '👍', '🐍'];
 const MAX_CHAT_LENGTH = 80;
+// Typed chat: false means players can only use the QUICK_CHAT buttons above.
+// Change it to true to bring back the box for typing your own messages.
+const TYPED_CHAT = false;
 
 // Each browser tab gets its own random id for the session.
 const MY_ID = 'p' + Math.random().toString(36).slice(2, 10);
@@ -268,9 +271,12 @@ function onTurns(callback) {
 function sendState(state) {
   if (!session) return;
   session.room.child('state').set({
-    players: state.players.map(p => ({ id: p.id, b: packSpots(p.body), s: p.score, x: p.crashed ? 1 : 0 })),
+    players: state.players.map(p => ({ id: p.id, b: packSpots(p.body), s: p.score, x: p.crashed ? 1 : 0, u: p.until })),
     food: packSpots(state.foods),
     left: state.leftovers.map(l => l.x + ',' + l.y + ',' + l.color).join(';'),
+    pu: state.powerUps.map(pu => pu.x + ',' + pu.y + ',' + pu.kind + ',' + pu.until).join(';'),
+    pops: state.pops.map(pop => pop.x + ',' + pop.y + ',' + pop.kind).join(';'),
+    c: state.clock,
   });
 }
 
@@ -281,12 +287,21 @@ function onState(callback) {
     const raw = snap.val();
     if (!raw) return;
     callback({
-      players: (raw.players || []).map(p => ({ id: p.id, body: unpackSpots(p.b), score: p.s, crashed: !!p.x })),
+      players: (raw.players || []).map(p => ({ id: p.id, body: unpackSpots(p.b), score: p.s, crashed: !!p.x, until: p.u || {} })),
       foods: unpackSpots(raw.food),
       leftovers: raw.left ? raw.left.split(';').map(t => {
         const [x, y, color] = t.split(',').map(Number);
         return { x, y, color };
       }) : [],
+      powerUps: raw.pu ? raw.pu.split(';').map(t => {
+        const [x, y, kind, until] = t.split(',');
+        return { x: Number(x), y: Number(y), kind, until: Number(until) };
+      }) : [],
+      pops: raw.pops ? raw.pops.split(';').map(t => {
+        const [x, y, kind] = t.split(',');
+        return { x: Number(x), y: Number(y), kind };
+      }) : [],
+      clock: raw.c || 0,
     });
   };
   ref.on('value', handler);
@@ -300,6 +315,7 @@ function onState(callback) {
 
 function sendChat(text) {
   if (!session) return;
+  if (!TYPED_CHAT && !QUICK_CHAT.includes(text)) return;
   const clean = cleanText(text);
   if (!clean) return;
   const i = session.players.findIndex(p => p.id === MY_ID);
@@ -388,6 +404,7 @@ const Screens = {
 
   addChatMessage(msg) {
     if (!msg) return;
+    if (!TYPED_CHAT && !QUICK_CHAT.includes(msg.text)) return; // typed messages are switched off
     const line = document.createElement('div');
     const who = document.createElement('b');
     who.textContent = msg.name + ': ';
@@ -465,7 +482,8 @@ window.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => { button.textContent = 'Send invite'; }, 3000);
   };
 
-  // Typing a chat message.
+  // Typing a chat message (hidden when TYPED_CHAT is false).
+  document.querySelector('.chat-row').hidden = !TYPED_CHAT;
   const send = () => { sendChat(el('chat-input').value); el('chat-input').value = ''; };
   el('chat-send').onclick = send;
   el('chat-input').addEventListener('keydown', e => {
