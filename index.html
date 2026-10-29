@@ -56,8 +56,8 @@
       background: rgba(20, 20, 20, 0.96); padding: 16px; box-sizing: border-box; touch-action: auto;
     }
     #board[hidden], #board [hidden] { display: none !important; }
-    #board-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
-    #board-tabs button { flex: 1; font: 18px monospace; padding: 8px; border: none; border-radius: 6px; background: #333; color: #fff; cursor: pointer; }
+    #board-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    #board-tabs button { flex: 1 1 40%; font: 17px monospace; padding: 8px; border: none; border-radius: 6px; background: #333; color: #fff; cursor: pointer; }
     #board-tabs button.active { background: #ffff66; color: #111; }
     #board-list { list-style: none; padding: 0; margin: 0 auto; text-align: left; font-size: 22px; white-space: pre; display: inline-block; min-width: 220px; }
     #board-list li { padding: 4px 8px; }
@@ -139,9 +139,9 @@
   </div>
 
   <!-- Bump the ?v= number when a .js file changes so browsers load the new version -->
-  <script src="firebase-config.js?v=24"></script>
-  <script src="online.js?v=24"></script>
-  <script src="leaderboard.js?v=24"></script>
-  <script src="game.js?v=24"></script>
+  <script src="firebase-config.js?v=25"></script>
+  <script src="online.js?v=25"></script>
+  <script src="leaderboard.js?v=25"></script>
+  <script src="game.js?v=25"></script>
 </body>
 </html>

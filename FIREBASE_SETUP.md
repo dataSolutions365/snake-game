@@ -26,7 +26,7 @@ service cloud.firestore {
         && request.resource.data.name.matches('^[A-Z]{3}$')
         && request.resource.data.score is int
         && request.resource.data.score >= 1
-        && request.resource.data.score <= 500
+        && request.resource.data.score <= 5000
         && request.resource.data.createdAt == request.time;
     }
     // One leaderboard per mode. Anyone can see them and add a score.
@@ -36,6 +36,14 @@ service cloud.firestore {
       allow create: if validScore();
     }
     match /scores_medium/{id} {
+      allow read: if true;
+      allow create: if validScore();
+    }
+    match /scores_easy_snakes/{id} {
+      allow read: if true;
+      allow create: if validScore();
+    }
+    match /scores_medium_snakes/{id} {
       allow read: if true;
       allow create: if validScore();
     }
@@ -80,4 +88,4 @@ Do this step **before** step 4, so the config you copy includes the database add
 The firebaseConfig is safe to share. It's designed to be public, and the rules in step 3 are what protect the database.
 
 ## Removing a bad score later
-Firestore Database → **Data** tab → `scores_easy` or `scores_medium` → click the entry → the ⋮ menu → **Delete document**.
+Firestore Database → **Data** tab → `scores_easy`, `scores_easy_snakes`, `scores_medium` or `scores_medium_snakes` → click the entry → the ⋮ menu → **Delete document**.

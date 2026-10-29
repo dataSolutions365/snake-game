@@ -7,9 +7,10 @@
 //    2. TALKING TO FIRESTORE
 //    3. SCREENS        the HTML panel drawn on top of the game
 //
-//  Each mode has its own list in the database: scores_easy and
-//  scores_medium. To give a new mode a leaderboard, add it to
-//  BOARD_MODES below AND add a matching block to the Firestore rules.
+//  Each board has its own list in the database: scores_easy,
+//  scores_easy_snakes, scores_medium and scores_medium_snakes ("_snakes"
+//  is with computer snakes switched on). To add a board, add it to
+//  BOARDS below AND add a matching block to the Firestore rules.
 // =====================================================================
 
 
@@ -17,7 +18,18 @@
 //  1. SETTINGS
 // =====================================================================
 
-const BOARD_MODES = ['easy', 'medium'];
+const BOARDS = {
+  easy:          'Easy',
+  easy_snakes:   'Easy 🐍',
+  medium:        'Medium',
+  medium_snakes: 'Medium 🐍',
+};
+const BOARD_MODES = Object.keys(BOARDS);
+
+// Which board a game goes on: its mode, plus "_snakes" if computer snakes were on.
+function boardFor(mode, snakes) {
+  return mode + (snakes ? '_snakes' : '');
+}
 const BOARD_SIZE = 10;
 
 // Initials we don't allow.
@@ -153,7 +165,7 @@ window.addEventListener('DOMContentLoaded', () => {
   const el = id => document.getElementById(id);
   BOARD_MODES.forEach(mode => {
     const b = document.createElement('button');
-    b.textContent = MODES[mode].name;
+    b.textContent = BOARDS[mode];
     b.dataset.mode = mode;
     b.onclick = () => Board.show(mode);
     el('board-tabs').append(b);
@@ -175,6 +187,7 @@ window.addEventListener('DOMContentLoaded', () => {
 const Leaderboard = {
   available: leaderboardAvailable,
   modes: BOARD_MODES,
+  boardFor,
   show: mode => Board.show(mode),
   makesTheBoard,
   askInitials: (mode, score) => Board.askInitials(mode, score),

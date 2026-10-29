@@ -63,11 +63,13 @@ const MODES = {
 //   about: the line in the legend on the start screen
 // What each one does is in usePowerUp() (section 3e). To add one, add a line
 // here and a matching part there.
+// rocksOnly: only shows up in modes with rocks.
 const POWER_UPS = {
   grow:   { icon: '⭐', good: true,  says: '+3',         about: 'Grow 3 longer, +3 points' },
   speed:  { icon: '⚡', good: true,  says: 'FAST!',      about: 'Go twice as fast' },
   ghost:  { icon: '👻', good: true,  says: 'GHOST!',     about: 'Slide through snakes' },
   fat:    { icon: '🦖', good: true,  says: 'DINO!',      about: '2x wider: others crash into you' },
+  crush:  { icon: '💪', good: true,  says: 'CRUSH!',     about: 'Smash rocks for free', rocksOnly: true },
   shrink: { icon: '💀', good: false, says: '-3',         about: 'Shrink 3 shorter, -3 points' },
   slow:   { icon: '🐢', good: false, says: 'SLOW...',    about: 'Go half speed' },
   flip:   { icon: '🌀', good: false, says: 'BACKWARDS!', about: 'Controls turn backwards' },
@@ -81,6 +83,7 @@ const POWER_UP_LASTS = 10000;    // milliseconds before an uneaten one disappear
 const POWER_UP_SIZE = 3;         // squares a star adds, or a skull takes away
 const EFFECT_LASTS = 5000;       // milliseconds all the others last
 const LIGHTS_OUT_SEE = 4;
+const ROCK_SMASH_COSTS = 2;      // squares you lose for smashing through a rock
 
 // Mazes: now and then a maze shows up on a screen nobody is on.
 // Hit one of its walls and you crash. Go in one gap and out the other
@@ -294,7 +297,11 @@ class StartScene extends Phaser.Scene {
       '🍎  Eat food to grow',
       '💥  Don\'t hit walls or snakes',
       '🗺️  Green edge? Go through it!',
-      '🪨  Medium has rocks: don\'t hit them'];
+      '🔢  The number on a snake is its size',
+      '😋  Run into a smaller snake: eat it!',
+      '    Same size or bigger: you crash',
+      '🪨  Rocks: longer than the number?',
+      '    Smash through (-' + ROCK_SMASH_COSTS + '). If not: crash'];
     const ups = ['POWER-UPS'];
     Object.values(POWER_UPS).filter(pu => pu.good === true).forEach(pu => ups.push(pu.icon + '  ' + pu.about));
     const downs = ['POWER DOWNS'];
@@ -306,7 +313,7 @@ class StartScene extends Phaser.Scene {
 
     const box = this.add.container(0, 0).setDepth(10).setVisible(false);
     box.add(this.add.rectangle(0, 0, WIDTH, HEIGHT, 0x000000, 0.92).setOrigin(0).setInteractive());
-    const style = { fontSize: PORTRAIT ? '14px' : '17px', color: '#ffffff', align: 'left', lineSpacing: 5 };
+    const style = { fontSize: PORTRAIT ? '14px' : '16px', color: '#ffffff', align: 'left', lineSpacing: PORTRAIT ? 5 : 3 };
     if (PORTRAIT) {
       box.add(this.add.text(WIDTH / 2, HEIGHT / 2 - 10, [...controls, '', ...ups, '', ...downs, '', ...extras].join('\n'), style).setOrigin(0.5));
     } else {
@@ -518,7 +525,9 @@ class GameScene extends Phaser.Scene {
     this.computerSnakes = [];
     this.foods = [];
     this.leftovers = []; // pieces of crashed computer snakes, free to eat (see 3h)
-    this.rocks = new Set();      // "x,y" of every rock square (see 3l)
+    this.rocks = new Map();      // "x,y" of every rock square -> its pile's power (see 3l)
+    this.sizeLabels = new Map(); // the size number on each snake (see 3m)
+    this.rockLabels = [];
     this.placeRocks();
     for (let i = 0; i < this.mode.food; i++) this.foods.push(this.freeSpot());
 
@@ -691,33 +700,37 @@ class GameScene extends Phaser.Scene {
       p.newHead = { x: p.body[0].x + p.direction.x, y: p.body[0].y + p.direction.y };
     });
 
-    // Then check who crashed: into a wall, any snake, or (with two players)
-    // head-on into another player's head. Ghosts only crash into walls.
-    const crashedNow = alive.filter(p => {
-      if (this.hitsWall(p.newHead)) return true;
-      if (this.has(p, 'ghost')) return false;
-      const headOn = alive.some(other => other !== p && !this.has(other, 'ghost') && other.newHead.x === p.newHead.x && other.newHead.y === p.newHead.y);
-      return this.hitsPlayer(p.newHead, alive, p) || this.hitsComputerSnake(p.newHead) || headOn;
+    // Then check what each one runs into:
+    //  - a wall: crash
+    //  - a rock: smash through it if you're bigger than its number (see 3l)
+    //  - a smaller snake: swallow it! (see 3m)
+    //  - its own body, or a snake the same size or bigger: crash
+    //    (head-on, the bigger one wins; the same size, both crash)
+    // Ghosts don't touch snakes, but still crash into walls and rocks.
+    const crashedNow = [];
+    const meals = [];
+    alive.forEach(p => {
+      if (this.smashRock(p, p.newHead)) return;
+      if (this.hitsWall(p.newHead)) { crashedNow.push(p); return; }
+      if (this.has(p, 'ghost')) return;
+      const headOn = alive.find(other => other !== p && !this.has(other, 'ghost') && other.newHead.x === p.newHead.x && other.newHead.y === p.newHead.y);
+      const other = headOn || this.snakeAt(p.newHead, alive, p);
+      if (!other) return;
+      if (other !== p && p.body.length > other.body.length) meals.push([p, other]);
+      else crashedNow.push(p);
     });
-    crashedNow.forEach(p => { p.crashed = true; });
+    crashedNow.forEach(p => this.knockOut(p, true));
+    meals.forEach(([eater, victim]) => { if (!eater.crashed) this.swallow(eater, victim); });
 
     if (this.online) {
-      // Online, a crashed player's snake turns into food, they lose some
-      // points, and they come back a few seconds later (see respawnPlayers).
-      // The round ends when the time runs out.
-      crashedNow.forEach(p => {
-        p.body.forEach(part => this.leftovers.push({ x: part.x, y: part.y, color: p.color.body }));
-        p.score = Math.max(0, p.score - CRASH_COSTS);
-        p.respawnAt = this.clock + PLAYER_RESPAWN_AFTER;
-        p.until = {};
-        p.grow = 0;
-      });
+      // Online, crashed players come back a few seconds later (see
+      // respawnPlayers). The round ends when the time runs out.
       if (this.clock >= ROUND_LENGTH) {
         this.gameOver();
         return;
       }
       if (fullStep) this.respawnPlayers();
-    } else if (crashedNow.length > 0) {
+    } else if (this.players.some(p => p.crashed)) {
       this.gameOver();
       return;
     }
@@ -740,6 +753,11 @@ class GameScene extends Phaser.Scene {
         p.score += 1;
         p.grow += 1;
       }
+      // Smashing a rock costs a couple of squares (never shorter than 2).
+      if (p.smashed) {
+        p.body.splice(Math.max(2, p.body.length - ROCK_SMASH_COSTS));
+        p.smashed = false;
+      }
       this.takePowerUpAt(p);
       this.checkMaze(p); // see 3k
     });
@@ -750,6 +768,11 @@ class GameScene extends Phaser.Scene {
       this.moveComputerSnakes();
       this.updatePowerUps();
       this.updateMaze();
+      // A computer snake might have swallowed you.
+      if (!this.online && this.players.some(p => p.crashed)) {
+        this.gameOver();
+        return;
+      }
     }
 
     // Online host: send everyone the new positions.
@@ -769,19 +792,6 @@ class GameScene extends Phaser.Scene {
     return spot.x < 0 || spot.x >= this.cols || spot.y < 0 || spot.y >= this.rows
       || !!(this.maze && this.maze.walls.has(spot.x + ',' + spot.y))
       || !!(this.rocks && this.rocks.has(spot.x + ',' + spot.y));
-  }
-
-  // Is any player's snake on this square? The tail square of a snake
-  // that's moving is about to move out of the way, so it doesn't count.
-  // The wide part of a dinosaur counts too, except for the dinosaur itself (me).
-  hitsPlayer(spot, moving = this.players, me = null) {
-    const here = part => part.x === spot.x && part.y === spot.y;
-    return this.players.some(p => !(this.online && p.crashed) && !this.has(p, 'ghost')
-      && ((moving.includes(p) ? p.body.slice(0, -1) : p.body).some(here) || (p !== me && this.fatCells(p).some(here))));
-  }
-
-  hitsComputerSnake(spot) {
-    return this.computerSnakes.some(cs => cs.alive && cs.body.some(part => part.x === spot.x && part.y === spot.y));
   }
 
   // Is anything (any snake, food, a wall or a rock) on this square?
@@ -832,7 +842,7 @@ class GameScene extends Phaser.Scene {
     let kind = this.powerUps[i].kind;
     this.powerUps.splice(i, 1);
     // A surprise turns into one of the others.
-    if (kind === 'mystery') kind = Phaser.Utils.Array.GetRandom(Object.keys(POWER_UPS).filter(k => k !== 'mystery'));
+    if (kind === 'mystery') kind = Phaser.Utils.Array.GetRandom(this.powerUpKinds().filter(k => k !== 'mystery'));
     this.usePowerUp(p, kind);
     this.pops.push({ x: p.body[0].x, y: p.body[0].y, kind });
   }
@@ -856,6 +866,11 @@ class GameScene extends Phaser.Scene {
     }
   }
 
+  // The power-ups that can show up in this mode.
+  powerUpKinds() {
+    return Object.keys(POWER_UPS).filter(kind => !POWER_UPS[kind].rocksOnly || this.mode.rocks);
+  }
+
   // Old power-ups disappear; now and then a new one shows up.
   updatePowerUps() {
     this.powerUps = this.powerUps.filter(pu => pu.until > this.clock);
@@ -864,14 +879,19 @@ class GameScene extends Phaser.Scene {
     const fewer = this.mode.powerUps === 1 ? 2 : 1; // Easy: half as often
     this.nextPowerUpAt = this.clock + POWER_UP_EVERY * fewer / screenCount;
     if (this.powerUps.length >= this.mode.powerUps * screenCount) return;
-    const kind = Phaser.Utils.Array.GetRandom(Object.keys(POWER_UPS));
+    const kind = Phaser.Utils.Array.GetRandom(this.powerUpKinds());
     this.powerUps.push({ ...this.freeSpot(), kind, until: this.clock + POWER_UP_LASTS });
   }
 
   // "+3", "FAST!" or "-3" floats up from where a power-up was taken.
   showPops(pops) {
     pops.forEach(pop => {
-      const info = pop.kind === 'maze' ? { says: 'MAZE BEATEN! +' + MAZE_PRIZE, good: true } : POWER_UPS[pop.kind];
+      const extras = {
+        maze: { says: 'MAZE BEATEN! +' + MAZE_PRIZE, good: true },
+        gulp: { says: 'GULP!', good: true },
+        smash: { says: 'SMASH! -' + ROCK_SMASH_COSTS, good: true },
+      };
+      const info = extras[pop.kind] || POWER_UPS[pop.kind];
       if (!info) return;
       const text = this.inWorld(this.add.text((pop.x + 0.5) * CELL, pop.y * CELL, info.says, {
         fontSize: '22px', fontStyle: 'bold', color: info.good ? '#7cfc00' : '#ff4444', stroke: '#000000', strokeThickness: 4,
@@ -941,6 +961,7 @@ class GameScene extends Phaser.Scene {
     });
 
     if (this.online) this.updateOutText(); // see 3i
+    this.drawSizes();     // see 3m
     this.drawLightsOut(); // see 3j
     this.followMe();
     this.drawMiniMap();
@@ -1057,7 +1078,7 @@ GameScene.prototype.spawnComputerSnake = function (color) {
     const tail2 = { x: head.x - 2, y: head.y };
     const farFromPlayer = this.players.every(p => Math.abs(head.x - p.body[0].x) + Math.abs(head.y - p.body[0].y) > 8);
     if (farFromPlayer && !this.hitsWall(tail2) && !this.isTaken(tail1) && !this.isTaken(tail2)) {
-      this.computerSnakes.push({ body: [head, tail1, tail2], direction: { x: 1, y: 0 }, color, alive: true });
+      this.computerSnakes.push({ body: [head, tail1, tail2], direction: { x: 1, y: 0 }, color, alive: true, grow: 0 });
       return;
     }
   }
@@ -1067,6 +1088,7 @@ GameScene.prototype.spawnComputerSnake = function (color) {
 
 GameScene.prototype.moveComputerSnakes = function () {
   this.computerSnakes.filter(cs => cs.alive).forEach(cs => {
+    if (!cs.alive) return; // swallowed by one that moved before it
     const head = cs.body[0];
 
     // THE BRAIN, in three simple rules:
@@ -1077,12 +1099,16 @@ GameScene.prototype.moveComputerSnakes = function () {
       { x: cs.direction.y, y: -cs.direction.x },     // turn the other way
     ];
 
-    // 2. Throw out any move that hits a wall or a snake.
+    // 2. Throw out any move that hits a wall, a rock, or a snake that's
+    //    not smaller than it (smaller ones it's happy to swallow).
     //    Sometimes it doesn't notice your snake, so you can cut it off.
     const seesYou = Math.random() >= COMPUTER_MISSES_YOU;
     const safe = options.filter(dir => {
       const spot = { x: head.x + dir.x, y: head.y + dir.y };
-      return !this.hitsWall(spot) && !this.hitsComputerSnake(spot) && !(seesYou && this.hitsPlayer(spot));
+      if (this.hitsWall(spot)) return false;
+      const other = this.snakeAt(spot, [], cs);
+      if (!other || (!seesYou && this.players.includes(other))) return true;
+      return other !== cs && cs.body.length > other.body.length;
     });
 
     // Nowhere safe to go? It's boxed in and crashes.
@@ -1108,14 +1134,18 @@ GameScene.prototype.moveComputerSnakes = function () {
     cs.direction = choice;
     const newHead = { x: head.x + choice.x, y: head.y + choice.y };
 
-    // Same rule as for you: run into another snake and you crash.
-    if (this.hitsPlayer(newHead)) {
+    // Same rules as for you: swallow a smaller snake, crash into anything else.
+    const other = this.snakeAt(newHead, [], cs);
+    if (other && (other === cs || cs.body.length <= other.body.length)) {
       this.crashComputerSnake(cs);
       return;
     }
+    if (other) this.swallow(cs, other);
 
     cs.body.unshift(newHead);
-    if (!this.eatFoodAt(newHead)) cs.body.pop();
+    if (this.eatFoodAt(newHead)) { /* ate: keep the tail */ }
+    else if (cs.grow > 0) cs.grow -= 1;
+    else cs.body.pop();
     // Computer snakes gobble up power-ups too, but they do nothing for them.
     this.powerUps = this.powerUps.filter(pu => pu.x !== newHead.x || pu.y !== newHead.y);
   });
@@ -1123,9 +1153,10 @@ GameScene.prototype.moveComputerSnakes = function () {
 
 // A crashed computer snake disappears, and every square of its body is
 // left behind as a piece of food anyone can eat. A new one comes later.
-GameScene.prototype.crashComputerSnake = function (cs) {
+// (swallowed: true when another snake ate it, so there's nothing left behind.)
+GameScene.prototype.crashComputerSnake = function (cs, swallowed = false) {
   cs.alive = false;
-  cs.body.forEach(part => this.leftovers.push({ x: part.x, y: part.y, color: cs.color }));
+  if (!swallowed) cs.body.forEach(part => this.leftovers.push({ x: part.x, y: part.y, color: cs.color }));
   this.time.delayedCall(RESPAWN_AFTER, () => {
     this.computerSnakes.splice(this.computerSnakes.indexOf(cs), 1);
     this.spawnComputerSnake(cs.color);
@@ -1468,7 +1499,7 @@ GameScene.prototype.makeMaze = function () {
   walls.delete(gapB.x + ',' + gapB.y);
 
   // Clear rocks, food and power-ups out of the way.
-  [...this.rocks].forEach(key => {
+  [...this.rocks.keys()].forEach(key => {
     const [x, y] = key.split(',').map(Number);
     if (inside({ x, y })) this.rocks.delete(key);
   });
@@ -1552,7 +1583,9 @@ GameScene.prototype.placeRocks = function () {
   for (let sx = 0; sx < this.screens; sx++) {
     for (let sy = 0; sy < this.screens; sy++) {
       for (let pile = 0; pile < this.mode.rocks; pile++) {
-        // Each pile is a short wiggly line, 3 to 5 rocks long.
+        // Each pile is a short wiggly line, 3 to 5 rocks long, with a power
+        // from 4 to 12. You can smash through if you're longer than that.
+        const power = Phaser.Math.Between(4, 12);
         let spot = {
           x: sx * this.frameCols + Phaser.Math.Between(2, this.frameCols - 3),
           y: sy * this.frameRows + Phaser.Math.Between(2, this.frameRows - 3),
@@ -1562,7 +1595,7 @@ GameScene.prototype.placeRocks = function () {
           // Keep well away from where the players start, and off the edges.
           const nearStart = starts.some(s => Math.abs(s.x - spot.x) + Math.abs(s.y - spot.y) < 7 || Math.abs(s.y - spot.y) <= 1);
           if (!nearStart && !this.hitsWall(spot) && spot.x > 0 && spot.y > 0 && spot.x < this.cols - 1 && spot.y < this.rows - 1) {
-            this.rocks.add(spot.x + ',' + spot.y);
+            this.rocks.set(spot.x + ',' + spot.y, power);
           }
           const step = Phaser.Utils.Array.GetRandom([{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }]);
           spot = { x: spot.x + step.x, y: spot.y + step.y };
@@ -1572,15 +1605,104 @@ GameScene.prototype.placeRocks = function () {
   }
 };
 
+// Is there a rock here that this player can smash? Longer than its power
+// (or with 💪): the rock breaks, and they'll lose a couple of squares
+// once they've moved (unless they have 💪).
+GameScene.prototype.smashRock = function (p, spot) {
+  const key = spot.x + ',' + spot.y;
+  if (!this.rocks.has(key)) return false;
+  const crusher = this.has(p, 'crush');
+  if (!crusher && p.body.length <= this.rocks.get(key)) return false; // too small: crash
+  this.rocks.delete(key);
+  if (!crusher) p.smashed = true;
+  this.pops.push({ x: spot.x, y: spot.y, kind: 'smash' });
+  return true;
+};
+
 GameScene.prototype.drawRocks = function () {
   const g = this.graphics;
-  this.rocks.forEach(key => {
+  const labels = [];
+  this.rocks.forEach((power, key) => {
     const [x, y] = key.split(',').map(Number);
     g.fillStyle(0x6e6e6e);
     g.fillRoundedRect(x * CELL + 1, y * CELL + 1, CELL - 2, CELL - 2, 6);
-    g.fillStyle(0x9a9a9a);
-    g.fillCircle(x * CELL + CELL * 0.35, y * CELL + CELL * 0.35, CELL * 0.15); // a bit of shine
+    labels.push({ x, y, power });
   });
+  // Every rock shows its power number.
+  while (this.rockLabels.length < labels.length) {
+    this.rockLabels.push(this.inWorld(this.add.text(0, 0, '', { fontSize: '12px', fontStyle: 'bold', color: '#ffffff' }).setOrigin(0.5).setDepth(3)));
+  }
+  this.rockLabels.forEach((text, i) => {
+    const rock = labels[i];
+    text.setVisible(!!rock);
+    if (rock) text.setText(String(rock.power)).setPosition((rock.x + 0.5) * CELL, (rock.y + 0.5) * CELL);
+  });
+};
+
+
+// =====================================================================
+//  3m. SNAKES EATING SNAKES
+//  Run into a smaller snake and you swallow it, growing by its size.
+//  Run into one the same size or bigger and you crash. Every snake shows
+//  its size as a number that rides along the middle of its body.
+// =====================================================================
+
+// Which snake (player or computer) is on this square? The tail square of a
+// moving snake is about to move away, so it doesn't count. A dinosaur's wide
+// side counts, except for the dinosaur itself (me). Ghosts don't count.
+GameScene.prototype.snakeAt = function (spot, moving, me) {
+  const here = part => part.x === spot.x && part.y === spot.y;
+  const player = this.players.find(p => !p.crashed && !this.has(p, 'ghost')
+    && ((moving.includes(p) ? p.body.slice(0, -1) : p.body).some(here) || (p !== me && this.fatCells(p).some(here))));
+  if (player) return player;
+  return this.computerSnakes.find(cs => cs.alive && (cs === me ? cs.body.slice(0, -1) : cs.body).some(here)) || null;
+};
+
+// eater swallows victim: it grows by the victim's size (and scores that many).
+GameScene.prototype.swallow = function (eater, victim) {
+  const size = victim.body.length;
+  eater.grow = (eater.grow || 0) + size;
+  if (eater.score !== undefined) eater.score += size;
+  this.pops.push({ x: eater.body[0].x, y: eater.body[0].y, kind: 'gulp' });
+  if (this.computerSnakes.includes(victim)) this.crashComputerSnake(victim, true);
+  else this.knockOut(victim, false);
+};
+
+// A player is out: crashed (leaves food behind) or swallowed (doesn't).
+// Online, they lose some points and come back a few seconds later.
+GameScene.prototype.knockOut = function (p, leaveFood) {
+  if (p.crashed) return;
+  p.crashed = true;
+  if (!this.online) return;
+  if (leaveFood) p.body.forEach(part => this.leftovers.push({ x: part.x, y: part.y, color: p.color.body }));
+  p.score = Math.max(0, p.score - CRASH_COSTS);
+  p.respawnAt = this.clock + PLAYER_RESPAWN_AFTER;
+  p.until = {};
+  p.grow = 0;
+};
+
+// The size number on each snake: a dark shade of the snake's color on a
+// light badge, sitting on the middle of its body so it moves along with it.
+GameScene.prototype.drawSizes = function () {
+  const snakes = [
+    ...this.players.filter(p => !(this.online && p.crashed) && p.body.length).map(p => ({ key: p, body: p.body, color: p.color.body, badge: p.color.head })),
+    ...this.computerSnakes.filter(cs => cs.alive).map(cs => ({ key: cs, body: cs.body, color: cs.color, badge: 0xffffff })),
+  ];
+  const labels = new Map();
+  snakes.forEach(({ key, body, color, badge }) => {
+    const text = this.sizeLabels.get(key)
+      || this.inWorld(this.add.text(0, 0, '', { fontSize: '12px', fontStyle: 'bold' }).setOrigin(0.5).setDepth(3));
+    this.sizeLabels.delete(key);
+    const middle = body[Math.min(body.length - 1, Math.max(1, Math.floor(body.length / 2)))];
+    this.graphics.fillStyle(badge);
+    this.graphics.fillCircle((middle.x + 0.5) * CELL, (middle.y + 0.5) * CELL, CELL * 0.45);
+    text.setText(String(body.length))
+      .setColor('#' + Phaser.Display.Color.IntegerToColor(color).darken(45).color.toString(16).padStart(6, '0'))
+      .setPosition((middle.x + 0.5) * CELL, (middle.y + 0.5) * CELL);
+    labels.set(key, text);
+  });
+  this.sizeLabels.forEach(text => text.destroy()); // snakes that are gone
+  this.sizeLabels = labels;
 };
 
 
@@ -1654,10 +1776,12 @@ class GameOverScene extends Phaser.Scene {
     const changeMode = () => { if (!Leaderboard.isOpen()) this.scene.start('Start'); };
 
     // Leaderboard: if this score made the top 10, ask for initials.
-    const hasBoard = Leaderboard.available() && Leaderboard.modes.includes(data.mode);
+    // (Easy and Medium each have one board with computer snakes and one without.)
+    const board = Leaderboard.boardFor(data.mode, data.snakes);
+    const hasBoard = Leaderboard.available() && Leaderboard.modes.includes(board);
     if (hasBoard) {
-      Leaderboard.makesTheBoard(data.mode, data.score)
-        .then(made => { if (made && this.scene.isActive()) Leaderboard.askInitials(data.mode, data.score); })
+      Leaderboard.makesTheBoard(board, data.score)
+        .then(made => { if (made && this.scene.isActive()) Leaderboard.askInitials(board, data.score); })
         .catch(() => {}); // no connection: just skip it
     }
 
@@ -1669,7 +1793,7 @@ class GameOverScene extends Phaser.Scene {
       this.input.keyboard.on('keydown-SPACE', playAgain);
       this.input.keyboard.on('keydown-M', changeMode);
       if (hasBoard) {
-        const showBoard = () => Leaderboard.show(data.mode);
+        const showBoard = () => Leaderboard.show(board);
         makeButton(this, WIDTH / 2, HEIGHT / 2 + 215, TOUCH ? 'Leaderboard' : 'Leaderboard (L)', '#ffff66', showBoard);
         this.input.keyboard.on('keydown-L', showBoard);
       }
