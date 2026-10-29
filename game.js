@@ -29,6 +29,9 @@ class MainScene extends Phaser.Scene {
     // so the snake moves one square at a time.
     this.time.addEvent({ delay: MOVE_EVERY, loop: true, callback: this.moveSnake, callbackScope: this });
 
+    // A hint at the top of the screen.
+    this.add.text(COLS * CELL / 2, 10, 'Use the arrow keys to steer', { fontSize: '18px', color: '#aaaaaa' }).setOrigin(0.5, 0);
+
     this.draw();
   }
 
