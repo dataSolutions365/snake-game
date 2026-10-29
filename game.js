@@ -132,6 +132,15 @@ function saveColorChoice(i) {
   try { localStorage.setItem('snakeColor', i); } catch (e) { }
 }
 
+// How the player steers on a computer: 'keys' (arrow keys) or 'mouse'.
+// Picked on the start screen and saved the same way.
+function loadControls() {
+  try { return localStorage.getItem('snakeControls') === 'mouse' ? 'mouse' : 'keys'; } catch (e) { return 'keys'; }
+}
+function saveControls(choice) {
+  try { localStorage.setItem('snakeControls', choice); } catch (e) { }
+}
+
 // Quick links: a link like ?mode=easy skips the start screen and goes
 // straight into that mode. Add &color=pink to pick a color too.
 // Examples:  snake.datasolutions365.com/?mode=easy
@@ -179,12 +188,15 @@ class StartScene extends Phaser.Scene {
 
     this.add.text(WIDTH / 2, HEIGHT / 2 - 225, 'SNAKE', { fontSize: '64px', color: '#7cfc00' }).setOrigin(0.5);
 
-    const howTo = TOUCH ? 'Swipe to steer' : 'Steer with the arrow keys or the mouse';
-    this.add.text(WIDTH / 2, HEIGHT / 2 - 135, howTo + '\nEat the red food to grow\nDon\'t hit the walls or any snake!',
+    // On a phone: "Swipe to steer". On a computer, that line is the
+    // arrow keys / mouse picker instead (see setupControlsPicker).
+    const howTo = TOUCH ? 'Swipe to steer\n' : '';
+    this.add.text(WIDTH / 2, HEIGHT / 2 - (TOUCH ? 135 : 120), howTo + 'Eat the red food to grow\nDon\'t hit the walls or any snake!',
       { fontSize: '18px', color: '#cccccc', align: 'center', lineSpacing: 8 }).setOrigin(0.5);
 
     this.setupColorPicker(HEIGHT / 2 - 35);
     this.setupLegend();
+    if (!TOUCH) this.setupControlsPicker();
 
     // Leaderboard button in the top-right corner (once Firebase is set up). Keyboard: L
     if (Leaderboard.available()) {
@@ -239,7 +251,7 @@ class StartScene extends Phaser.Scene {
   setupLegend() {
     const controls = ['HOW TO MOVE',
       '⌨️  Arrow keys steer',
-      '🖱️  Or move the mouse: you follow it',
+      '🖱️  Or pick Mouse (C): you follow it',
       '👥  2 players: P1 uses W A S D,',
       '    P2 uses the arrow keys',
       '📱  Phone: swipe the way to go',
@@ -273,6 +285,28 @@ class StartScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true }).on('pointerdown', toggle);
     this.input.keyboard.on('keydown-P', toggle);
     this.legend = box;
+  }
+
+  // Arrow keys or mouse? Two buttons under the title; the picked one
+  // is lit up. The C key switches too. Phones always swipe, so it's only
+  // on computers.
+  setupControlsPicker() {
+    const y = HEIGHT / 2 - 168;
+    this.add.text(WIDTH / 2 - 130, y, 'Steer with:', { fontSize: '18px', color: '#cccccc' }).setOrigin(1, 0.5);
+    const style = { fontSize: '18px', padding: { x: 10, y: 5 } };
+    const keys = this.add.text(WIDTH / 2 - 115, y, '⌨️ Arrow keys', style).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
+    const mouse = this.add.text(WIDTH / 2 + 60, y, '🖱️ Mouse', style).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
+    this.add.text(WIDTH / 2 + 175, y, '(C)', { fontSize: '16px', color: '#888888' }).setOrigin(0, 0.5);
+    const show = () => {
+      const picked = loadControls();
+      keys.setColor(picked === 'keys' ? '#111111' : '#cccccc').setBackgroundColor(picked === 'keys' ? '#3fa9f5' : '#333333');
+      mouse.setColor(picked === 'mouse' ? '#111111' : '#cccccc').setBackgroundColor(picked === 'mouse' ? '#3fa9f5' : '#333333');
+    };
+    const pick = choice => { saveControls(choice); show(); };
+    keys.on('pointerdown', () => pick('keys'));
+    mouse.on('pointerdown', () => pick('mouse'));
+    this.input.keyboard.on('keydown-C', () => pick(loadControls() === 'mouse' ? 'keys' : 'mouse'));
+    show();
   }
 
   // A row of colored squares. Click or tap one to pick it (on a computer,
@@ -445,10 +479,11 @@ class GameScene extends Phaser.Scene {
       else this.turn(this.me, 0, dy > 0 ? 1 : -1);
     });
 
-    // Mouse: once you move the mouse, your snake heads toward the pointer
-    // (see steerToMouse). Pressing an arrow key switches back to the keys.
-    this.mouseSteering = false;
-    if (!TOUCH) this.input.on('pointermove', () => { this.mouseSteering = true; });
+    // Mouse: if the player picked the mouse on the start screen, the snake
+    // heads toward the pointer (see steerToMouse). Pressing an arrow key
+    // steers with the keys until the mouse moves again.
+    this.mouseSteering = !TOUCH && loadControls() === 'mouse';
+    if (this.mouseSteering) this.input.on('pointermove', () => { this.mouseSteering = true; });
   }
 
   // Turn toward the mouse pointer: go whichever way it's furthest away
