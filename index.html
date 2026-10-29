@@ -12,13 +12,15 @@
     if (MAINTENANCE_MODE) location.replace('maintenance.html');
   </script>
   <style>
-    body { margin: 0; background: #1b1b1b; display: flex; justify-content: center; align-items: center; height: 100vh; }
+    body { margin: 0; background: #1b1b1b; height: 100vh; height: 100dvh; overflow: hidden; }
+    /* Stop the page from scrolling or zooming when you swipe on a phone */
+    html, body, canvas { touch-action: none; overscroll-behavior: none; user-select: none; -webkit-user-select: none; }
   </style>
   <!-- Phaser, the game framework, loaded from a free CDN -->
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
 </head>
 <body>
   <!-- Bump the ?v= number when game.js changes so browsers load the new version -->
-  <script src="game.js?v=3"></script>
+  <script src="game.js?v=4"></script>
 </body>
 </html>

@@ -1,9 +1,16 @@
 // ----- Settings -----
 // The board is a grid of squares. Changing these numbers changes the board size.
 const CELL = 20;        // size of one square, in pixels
-const COLS = 40;        // squares across  (40 * 20 = 800 pixels wide)
-const ROWS = 30;        // squares down    (30 * 20 = 600 pixels tall)
 const MOVE_EVERY = 120; // milliseconds between snake steps (smaller = faster)
+
+// On a computer or a sideways phone, the board is wide: 40 x 30 squares.
+// On a phone held upright, it's tall instead, shaped to fit the screen.
+const PORTRAIT = window.innerHeight > window.innerWidth;
+const COLS = PORTRAIT ? 20 : 40;  // squares across
+const ROWS = PORTRAIT ? Math.min(40, Math.floor(20 * window.innerHeight / window.innerWidth)) : 30; // squares down
+
+// Touch screens get swipe controls instead of arrow keys.
+const TOUCH = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
 // A "scene" is one screen of the game. Phaser calls create() once at the start
 // and update() about 60 times per second.
@@ -11,10 +18,11 @@ class MainScene extends Phaser.Scene {
   create() {
     // The snake is a list of grid positions. Item 0 is the head.
     // It starts 3 squares long in the middle of the board, facing right.
+    const midX = Math.floor(COLS / 2), midY = Math.floor(ROWS / 2);
     this.snake = [
-      { x: 20, y: 15 },
-      { x: 19, y: 15 },
-      { x: 18, y: 15 },
+      { x: midX, y: midY },
+      { x: midX - 1, y: midY },
+      { x: midX - 2, y: midY },
     ];
     this.direction = { x: 1, y: 0 };     // the way the snake is moving now
     this.nextDirection = { x: 1, y: 0 }; // the way the player last pressed
@@ -25,12 +33,26 @@ class MainScene extends Phaser.Scene {
     // Listen for the arrow keys.
     this.cursors = this.input.keyboard.createCursorKeys();
 
+    // Swipes: remember where the finger went down, and when it lifts,
+    // turn whichever way it moved the most (left/right or up/down).
+    this.input.on('pointerdown', pointer => { this.swipeStart = { x: pointer.x, y: pointer.y }; });
+    this.input.on('pointerup', pointer => {
+      if (!this.swipeStart) return;
+      const dx = pointer.x - this.swipeStart.x;
+      const dy = pointer.y - this.swipeStart.y;
+      this.swipeStart = null;
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < 20) return; // too short, just a tap
+      if (Math.abs(dx) > Math.abs(dy)) this.turn(dx > 0 ? 1 : -1, 0);
+      else this.turn(0, dy > 0 ? 1 : -1);
+    });
+
     // Run moveSnake() over and over on a timer, instead of every frame,
     // so the snake moves one square at a time.
     this.time.addEvent({ delay: MOVE_EVERY, loop: true, callback: this.moveSnake, callbackScope: this });
 
-    // A hint at the top of the screen.
-    this.add.text(COLS * CELL / 2, 10, 'Use the arrow keys to steer', { fontSize: '18px', color: '#aaaaaa' }).setOrigin(0.5, 0);
+    // A hint at the bottom of the screen.
+    const hint = TOUCH ? 'Swipe to steer' : 'Use the arrow keys to steer';
+    this.add.text(COLS * CELL / 2, ROWS * CELL - 10, hint, { fontSize: '18px', color: '#aaaaaa' }).setOrigin(0.5, 1);
 
     // Score, shown in the top-left corner.
     this.score = 0;
@@ -45,11 +67,17 @@ class MainScene extends Phaser.Scene {
   update() {
     // Check the keys every frame. We only remember the choice here;
     // the snake actually turns on its next step in moveSnake().
-    // The second check stops the snake turning straight back into itself.
-    if (this.cursors.left.isDown && this.direction.x !== 1) this.nextDirection = { x: -1, y: 0 };
-    if (this.cursors.right.isDown && this.direction.x !== -1) this.nextDirection = { x: 1, y: 0 };
-    if (this.cursors.up.isDown && this.direction.y !== 1) this.nextDirection = { x: 0, y: -1 };
-    if (this.cursors.down.isDown && this.direction.y !== -1) this.nextDirection = { x: 0, y: 1 };
+    if (this.cursors.left.isDown) this.turn(-1, 0);
+    if (this.cursors.right.isDown) this.turn(1, 0);
+    if (this.cursors.up.isDown) this.turn(0, -1);
+    if (this.cursors.down.isDown) this.turn(0, 1);
+  }
+
+  // Used by both the arrow keys and swipes.
+  turn(x, y) {
+    // Don't let the snake turn straight back into itself.
+    if (x === -this.direction.x && y === -this.direction.y) return;
+    this.nextDirection = { x, y };
   }
 
   moveSnake() {
