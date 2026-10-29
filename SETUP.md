@@ -25,3 +25,11 @@
 ## What the files are
 - `index.html` — the web page. It loads Phaser (the game framework) and your game code.
 - `game.js` — your game. This is where we'll write Snake in step 2.
+
+## Taking the game down for maintenance
+1. On GitHub, open `index.html` and click the pencil icon to edit.
+2. Near the top, change `const MAINTENANCE_MODE = false;` to `true`.
+3. Click **Commit changes**. Within a minute or two, visitors see the "Be right back!" page (`maintenance.html`).
+4. To bring the game back, change it to `false` and commit again.
+
+To change the message players see, edit the text in `maintenance.html`.

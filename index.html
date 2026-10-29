@@ -4,6 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Snake</title>
+  <script>
+    // ===== MAINTENANCE SWITCH =====
+    // Change false to true to take the game down and show maintenance.html.
+    // Change it back to false to bring the game back.
+    const MAINTENANCE_MODE = false;
+    if (MAINTENANCE_MODE) location.replace('maintenance.html');
+  </script>
   <style>
     body { margin: 0; background: #1b1b1b; display: flex; justify-content: center; align-items: center; height: 100vh; }
   </style>
