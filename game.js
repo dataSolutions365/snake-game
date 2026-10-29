@@ -70,7 +70,7 @@ const POWER_UPS = {
   spin:   { icon: '🌪️', good: false, says: 'SPIN!',      about: 'The screen spins around' },
   dark:   { icon: '🙈', good: false, says: 'LIGHTS OUT!', about: 'You only see right around you' },
   // good: null means it could be either. It turns into one of the others at random.
-  mystery: { icon: '❓', good: null, says: '?',          about: 'Surprise! Could be good or bad' },
+  mystery: { icon: '❓', good: null, says: '?',          about: 'Surprise! Good or bad?' },
 };
 const POWER_UP_EVERY = 5000;     // milliseconds between new power-ups (on each screen)
 const POWER_UP_LASTS = 10000;    // milliseconds before an uneaten one disappears (it blinks first)
@@ -233,26 +233,43 @@ class StartScene extends Phaser.Scene {
     if (this.p2Label) this.p2Label.setText('P2 is ' + secondColor(this.colorChoice).name);
   }
 
-  // The power-up legend: a "?" button in the top-left corner (keyboard: P)
-  // opens a list of what every power-up and power down does.
+  // "How to play": a button in the top-left corner (keyboard: P) opens
+  // the controls and a list of what every power-up and power down does.
+  // On a wide screen it's two columns side by side; on a phone, one long one.
   setupLegend() {
-    const lines = ['POWER-UPS'];
-    Object.values(POWER_UPS).filter(pu => pu.good === true).forEach(pu => lines.push(pu.icon + '  ' + pu.about));
-    lines.push('', 'POWER DOWNS');
-    Object.values(POWER_UPS).filter(pu => pu.good === false).forEach(pu => lines.push(pu.icon + '  ' + pu.about));
-    Object.values(POWER_UPS).filter(pu => pu.good === null).forEach(pu => lines.push('', pu.icon + '  ' + pu.about));
-    lines.push('', '🧩  Mazes: find the orange on the map.', '    Hit a wall: crash. Get through: +' + MAZE_PRIZE + '!');
-    lines.push('', 'All but ⭐ and 💀 last ' + EFFECT_LASTS / 1000 + ' seconds.', '', TOUCH ? 'Tap to close' : 'Click or press P to close');
+    const controls = ['HOW TO MOVE',
+      '⌨️  Arrow keys steer',
+      '🖱️  Or move the mouse: you follow it',
+      '👥  2 players: P1 uses W A S D,',
+      '    P2 uses the arrow keys',
+      '📱  Phone: swipe the way to go',
+      '🍎  Eat food to grow',
+      '💥  Don\'t hit walls or snakes',
+      '🗺️  Green edge? Go through it!'];
+    const ups = ['POWER-UPS'];
+    Object.values(POWER_UPS).filter(pu => pu.good === true).forEach(pu => ups.push(pu.icon + '  ' + pu.about));
+    const downs = ['POWER DOWNS'];
+    Object.values(POWER_UPS).filter(pu => pu.good === false).forEach(pu => downs.push(pu.icon + '  ' + pu.about));
+    const extras = [];
+    Object.values(POWER_UPS).filter(pu => pu.good === null).forEach(pu => extras.push(pu.icon + '  ' + pu.about));
+    extras.push('🧩  Mazes: find orange on the map.', '    Hit a wall: crash.', '    Get through: +' + MAZE_PRIZE + '!',
+      '', 'All but ⭐ and 💀 last ' + EFFECT_LASTS / 1000 + ' seconds.');
 
     const box = this.add.container(0, 0).setDepth(10).setVisible(false);
-    box.add(this.add.rectangle(0, 0, WIDTH, HEIGHT, 0x000000, 0.9).setOrigin(0).setInteractive());
-    box.add(this.add.text(WIDTH / 2, HEIGHT / 2, lines.join('\n'), {
-      fontSize: PORTRAIT ? '15px' : '19px', color: '#ffffff', align: 'left', lineSpacing: 6,
-    }).setOrigin(0.5));
+    box.add(this.add.rectangle(0, 0, WIDTH, HEIGHT, 0x000000, 0.92).setOrigin(0).setInteractive());
+    const style = { fontSize: PORTRAIT ? '14px' : '17px', color: '#ffffff', align: 'left', lineSpacing: 5 };
+    if (PORTRAIT) {
+      box.add(this.add.text(WIDTH / 2, HEIGHT / 2 - 10, [...controls, '', ...ups, '', ...downs, '', ...extras].join('\n'), style).setOrigin(0.5));
+    } else {
+      box.add(this.add.text(30, 50, [...controls, '', ...ups].join('\n'), style));
+      box.add(this.add.text(WIDTH / 2 + 45, 50, [...downs, '', ...extras].join('\n'), style));
+    }
+    box.add(this.add.text(WIDTH / 2, HEIGHT - 30, TOUCH ? 'Tap to close' : 'Click or press P to close',
+      { fontSize: '18px', color: '#ffff66' }).setOrigin(0.5));
     const toggle = () => box.setVisible(!box.visible);
     box.list[0].on('pointerdown', toggle);
 
-    this.add.text(10, 10, '⭐ Power-ups', { fontSize: '18px', color: '#111111', backgroundColor: '#7cfc00', padding: { x: 8, y: 6 } })
+    this.add.text(10, 10, '❔ How to play', { fontSize: '18px', color: '#111111', backgroundColor: '#7cfc00', padding: { x: 8, y: 6 } })
       .setInteractive({ useHandCursor: true }).on('pointerdown', toggle);
     this.input.keyboard.on('keydown-P', toggle);
     this.legend = box;
