@@ -41,16 +41,20 @@ const CRASH_COSTS = 5;            // points you lose for crashing online
 // players: 2 means two people on one keyboard (not shown on phones).
 // online: true means a private room with friends on other devices (see online.js).
 // It only shows up once Firebase is set up in firebase-config.js.
-// powerUps: true means the power-up icons below show up in that mode.
+// computerSnakes: how many, when "Computer snakes" is switched on at the start
+//   (1-player modes only; the switch is saved like the color).
+// powerUps: the most power-ups on each screen at once (0 = none). With 1,
+//   they also come half as often.
+// rocks: how many rock piles on each screen. Hit one and you crash.
 // mazes: true means mazes show up now and then (see MAZE_ settings below).
 // screens: how big the world is. 2 means 2 x 2 screens: you see one at a
 // time, and the view flips to the next when you go past the edge.
 // (2 players on one keyboard stay on 1 screen, so you can both see.)
 const MODES = {
-  easy:      { name: 'EASY',      about: 'Just you',        players: 1, computerSnakes: 0, food: 4,  powerUps: true, screens: 2, mazes: true },
-  medium:    { name: 'MEDIUM',    about: 'Computer snakes', players: 1, computerSnakes: 5, food: 8,  powerUps: true, screens: 2, mazes: true },
-  twoplayer: { name: '2 PLAYERS', about: 'Same computer',   players: 2, computerSnakes: 0, food: 2,  powerUps: true, screens: 1 },
-  online:    { name: 'ONLINE',    about: 'Private room',    online: true, computerSnakes: 0, food: 10, powerUps: true, screens: 2, mazes: true },
+  easy:      { name: 'EASY',      about: 'Fewer power-ups', players: 1, computerSnakes: 3, food: 4,  powerUps: 1, screens: 2, mazes: true, rocks: 0 },
+  medium:    { name: 'MEDIUM',    about: 'Rocks in the way', players: 1, computerSnakes: 5, food: 8, powerUps: 3, screens: 2, mazes: true, rocks: 6 },
+  twoplayer: { name: '2 PLAYERS', about: 'Same computer',   players: 2, computerSnakes: 0, food: 2,  powerUps: 3, screens: 1 },
+  online:    { name: 'ONLINE',    about: 'Private room',    online: true, computerSnakes: 0, food: 10, powerUps: 3, screens: 2, mazes: true },
 };
 
 // Power-ups and power downs: icons that pop up on the board now and then.
@@ -74,7 +78,6 @@ const POWER_UPS = {
 };
 const POWER_UP_EVERY = 5000;     // milliseconds between new power-ups (on each screen)
 const POWER_UP_LASTS = 10000;    // milliseconds before an uneaten one disappears (it blinks first)
-const MAX_POWER_UPS = 3;         // most at once (on each screen)
 const POWER_UP_SIZE = 3;         // squares a star adds, or a skull takes away
 const EFFECT_LASTS = 5000;       // milliseconds all the others last
 const LIGHTS_OUT_SEE = 4;
@@ -157,6 +160,13 @@ function loadTwoPlayerControls() {
 function saveTwoPlayerControls(choices) {
   try { localStorage.setItem('snakeControls2', choices.join(',')); } catch (e) { }
 }
+// Computer snakes on or off (for Easy and Medium). Off to start with.
+function loadSnakesOn() {
+  try { return localStorage.getItem('snakeComputerSnakes') === 'on'; } catch (e) { return false; }
+}
+function saveSnakesOn(on) {
+  try { localStorage.setItem('snakeComputerSnakes', on ? 'on' : 'off'); } catch (e) { }
+}
 function saveControls(choice) {
   try { localStorage.setItem('snakeControls', choice); } catch (e) { }
 }
@@ -165,6 +175,7 @@ function saveControls(choice) {
 // straight into that mode. Add &color=pink to pick a color too.
 // Examples:  snake.datasolutions365.com/?mode=easy
 //            snake.datasolutions365.com/?mode=medium&color=pink
+//            snake.datasolutions365.com/?mode=medium&snakes=on   (computer snakes on)
 const LINK = new URLSearchParams(window.location.search);
 let quickLinkUsed = false; // only jump in once, so "Change mode" still shows the start screen
 
@@ -202,7 +213,9 @@ class StartScene extends Phaser.Scene {
     if (MODES[linkMode] && !MODES[linkMode].online && !quickLinkUsed) {
       quickLinkUsed = true;
       const linkColor = PLAYER_COLORS.findIndex(c => c.name.toLowerCase() === (LINK.get('color') || '').toLowerCase());
-      this.scene.start('Game', { mode: linkMode, color: linkColor >= 0 ? linkColor : loadColorChoice() });
+      const linkSnakes = LINK.get('snakes'); // &snakes=on or &snakes=off
+      this.scene.start('Game', { mode: linkMode, color: linkColor >= 0 ? linkColor : loadColorChoice(),
+        snakes: linkSnakes ? linkSnakes === 'on' : undefined });
       return;
     }
 
@@ -226,7 +239,7 @@ class StartScene extends Phaser.Scene {
       this.input.keyboard.on('keydown-L', showBoard);
     }
 
-    this.add.text(WIDTH / 2, HEIGHT / 2 + 25, 'Choose a mode:', { fontSize: '20px', color: '#ffffff' }).setOrigin(0.5);
+    this.setupSnakesSwitch(HEIGHT / 2 + (PORTRAIT ? 8 : 25));
 
     // One button per mode. Keyboard: 1, 2, 3...
     // On a wide screen they sit side by side (two rows if there are 4);
@@ -280,7 +293,8 @@ class StartScene extends Phaser.Scene {
       '📱  Phone: swipe the way to go',
       '🍎  Eat food to grow',
       '💥  Don\'t hit walls or snakes',
-      '🗺️  Green edge? Go through it!'];
+      '🗺️  Green edge? Go through it!',
+      '🪨  Medium has rocks: don\'t hit them'];
     const ups = ['POWER-UPS'];
     Object.values(POWER_UPS).filter(pu => pu.good === true).forEach(pu => ups.push(pu.icon + '  ' + pu.about));
     const downs = ['POWER DOWNS'];
@@ -338,6 +352,27 @@ class StartScene extends Phaser.Scene {
     });
     const pick = choice => { saveControls(choice); show(); };
     this.input.keyboard.on('keydown-C', () => pick(CONTROLS[(CONTROLS.indexOf(loadControls()) + 1) % CONTROLS.length]));
+    show();
+  }
+
+  // "Computer snakes: Off / On" for Easy and Medium. Keyboard: S.
+  setupSnakesSwitch(y) {
+    const style = { fontSize: '18px', padding: { x: 10, y: 5 } };
+    const parts = [
+      this.add.text(0, y, '🐍 Computer snakes:', { fontSize: '18px', color: '#ffffff' }).setOrigin(0, 0.5),
+      this.add.text(0, y, 'Off', style).setOrigin(0, 0.5).setInteractive({ useHandCursor: true }).on('pointerdown', () => pick(false)),
+      this.add.text(0, y, 'On', style).setOrigin(0, 0.5).setInteractive({ useHandCursor: true }).on('pointerdown', () => pick(true)),
+    ];
+    if (!TOUCH) parts.push(this.add.text(0, y, '(S)', { fontSize: '16px', color: '#888888' }).setOrigin(0, 0.5));
+    let x = WIDTH / 2 - (parts.reduce((total, part) => total + part.width, 0) + 10 * (parts.length - 1)) / 2;
+    parts.forEach(part => { part.x = x; x += part.width + 10; });
+    const show = () => {
+      const on = loadSnakesOn();
+      parts[1].setColor(on ? '#cccccc' : '#111111').setBackgroundColor(on ? '#333333' : '#ffa500');
+      parts[2].setColor(on ? '#111111' : '#cccccc').setBackgroundColor(on ? '#ffa500' : '#333333');
+    };
+    const pick = on => { saveSnakesOn(on); show(); };
+    this.input.keyboard.on('keydown-S', () => pick(!loadSnakesOn()));
     show();
   }
 
@@ -483,6 +518,8 @@ class GameScene extends Phaser.Scene {
     this.computerSnakes = [];
     this.foods = [];
     this.leftovers = []; // pieces of crashed computer snakes, free to eat (see 3h)
+    this.rocks = new Set();      // "x,y" of every rock square (see 3l)
+    this.placeRocks();
     for (let i = 0; i < this.mode.food; i++) this.foods.push(this.freeSpot());
 
     // Power-ups (see 3e). "clock" counts the milliseconds the game has run.
@@ -497,7 +534,10 @@ class GameScene extends Phaser.Scene {
     // Computer snakes (see section 3h).
     // They get the computer colors in order, skipping the players' colors.
     const computerColors = COMPUTER_COLORS.filter(c => !this.players.some(p => p.color.body === c));
-    for (let i = 0; i < this.mode.computerSnakes; i++) this.spawnComputerSnake(computerColors[i % computerColors.length]);
+    // (In Easy and Medium, only if "Computer snakes" is switched on.)
+    this.snakesOn = data.snakes !== undefined ? data.snakes : loadSnakesOn();
+    const computerCount = this.mode.players === 1 && !this.snakesOn ? 0 : this.mode.computerSnakes;
+    for (let i = 0; i < computerCount; i++) this.spawnComputerSnake(computerColors[i % computerColors.length]);
 
     // Run step() over and over on a timer, instead of every frame,
     // so the snakes move one square at a time. It runs twice as often as
@@ -724,10 +764,11 @@ class GameScene extends Phaser.Scene {
   }
 
   // ----- 3d. Crash checks -----
-  // The edge of the world, or a maze wall (see 3k).
+  // The edge of the world, a maze wall (see 3k) or a rock (see 3l).
   hitsWall(spot) {
     return spot.x < 0 || spot.x >= this.cols || spot.y < 0 || spot.y >= this.rows
-      || !!(this.maze && this.maze.walls.has(spot.x + ',' + spot.y));
+      || !!(this.maze && this.maze.walls.has(spot.x + ',' + spot.y))
+      || !!(this.rocks && this.rocks.has(spot.x + ',' + spot.y));
   }
 
   // Is any player's snake on this square? The tail square of a snake
@@ -743,8 +784,9 @@ class GameScene extends Phaser.Scene {
     return this.computerSnakes.some(cs => cs.alive && cs.body.some(part => part.x === spot.x && part.y === spot.y));
   }
 
-  // Is anything (any snake, or food) on this square?
+  // Is anything (any snake, food, a wall or a rock) on this square?
   isTaken(spot) {
+    if (this.hitsWall(spot)) return true;
     const allBodies = [...this.players.filter(p => !(this.online && p.crashed)).map(p => p.body), ...this.computerSnakes.filter(cs => cs.alive).map(cs => cs.body)];
     return allBodies.some(body => body.some(part => part.x === spot.x && part.y === spot.y))
       || (this.foods || []).some(food => food.x === spot.x && food.y === spot.y)
@@ -819,8 +861,9 @@ class GameScene extends Phaser.Scene {
     this.powerUps = this.powerUps.filter(pu => pu.until > this.clock);
     if (!this.mode.powerUps || this.clock < this.nextPowerUpAt) return;
     const screenCount = this.screens * this.screens;
-    this.nextPowerUpAt = this.clock + POWER_UP_EVERY / screenCount;
-    if (this.powerUps.length >= MAX_POWER_UPS * screenCount) return;
+    const fewer = this.mode.powerUps === 1 ? 2 : 1; // Easy: half as often
+    this.nextPowerUpAt = this.clock + POWER_UP_EVERY * fewer / screenCount;
+    if (this.powerUps.length >= this.mode.powerUps * screenCount) return;
     const kind = Phaser.Utils.Array.GetRandom(Object.keys(POWER_UPS));
     this.powerUps.push({ ...this.freeSpot(), kind, until: this.clock + POWER_UP_LASTS });
   }
@@ -842,6 +885,7 @@ class GameScene extends Phaser.Scene {
     this.graphics.clear();
     this.drawEdges(); // see 3j
     this.drawMaze();  // see 3k
+    this.drawRocks(); // see 3l
 
     // Power-ups: a green (good) or red (bad) glow, with the emoji on top.
     // Each emoji is its own text object, kept from one draw to the next.
@@ -974,7 +1018,7 @@ class GameScene extends Phaser.Scene {
     }
 
     // What to send to the game over screen.
-    const result = { mode: this.modeKey, color: this.colorChoice };
+    const result = { mode: this.modeKey, color: this.colorChoice, snakes: this.snakesOn };
 
     if (this.players.length === 1) {
       const score = this.players[0].score;
@@ -1423,7 +1467,11 @@ GameScene.prototype.makeMaze = function () {
   walls.delete(gapA.x + ',' + gapA.y);
   walls.delete(gapB.x + ',' + gapB.y);
 
-  // Clear food and power-ups out of the walls.
+  // Clear rocks, food and power-ups out of the way.
+  [...this.rocks].forEach(key => {
+    const [x, y] = key.split(',').map(Number);
+    if (inside({ x, y })) this.rocks.delete(key);
+  });
   this.foods = this.foods.map(f => walls.has(f.x + ',' + f.y) ? null : f).filter(Boolean);
   this.leftovers = this.leftovers.filter(l => !walls.has(l.x + ',' + l.y));
   this.powerUps = this.powerUps.filter(pu => !walls.has(pu.x + ',' + pu.y));
@@ -1493,6 +1541,50 @@ GameScene.prototype.showMessage = function (text) {
 
 
 // =====================================================================
+//  3l. ROCKS
+//  Piles of rocks scattered over each screen (Medium). hitsWall() counts
+//  them, so you crash into them and computer snakes steer around them.
+// =====================================================================
+
+GameScene.prototype.placeRocks = function () {
+  if (!this.mode.rocks) return;
+  const starts = this.players.map(p => p.body[0]);
+  for (let sx = 0; sx < this.screens; sx++) {
+    for (let sy = 0; sy < this.screens; sy++) {
+      for (let pile = 0; pile < this.mode.rocks; pile++) {
+        // Each pile is a short wiggly line, 3 to 5 rocks long.
+        let spot = {
+          x: sx * this.frameCols + Phaser.Math.Between(2, this.frameCols - 3),
+          y: sy * this.frameRows + Phaser.Math.Between(2, this.frameRows - 3),
+        };
+        const length = Phaser.Math.Between(3, 5);
+        for (let i = 0; i < length; i++) {
+          // Keep well away from where the players start, and off the edges.
+          const nearStart = starts.some(s => Math.abs(s.x - spot.x) + Math.abs(s.y - spot.y) < 7 || Math.abs(s.y - spot.y) <= 1);
+          if (!nearStart && !this.hitsWall(spot) && spot.x > 0 && spot.y > 0 && spot.x < this.cols - 1 && spot.y < this.rows - 1) {
+            this.rocks.add(spot.x + ',' + spot.y);
+          }
+          const step = Phaser.Utils.Array.GetRandom([{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }]);
+          spot = { x: spot.x + step.x, y: spot.y + step.y };
+        }
+      }
+    }
+  }
+};
+
+GameScene.prototype.drawRocks = function () {
+  const g = this.graphics;
+  this.rocks.forEach(key => {
+    const [x, y] = key.split(',').map(Number);
+    g.fillStyle(0x6e6e6e);
+    g.fillRoundedRect(x * CELL + 1, y * CELL + 1, CELL - 2, CELL - 2, 6);
+    g.fillStyle(0x9a9a9a);
+    g.fillCircle(x * CELL + CELL * 0.35, y * CELL + CELL * 0.35, CELL * 0.15); // a bit of shine
+  });
+};
+
+
+// =====================================================================
 //  ONLINE MENU SCREEN
 //  Just a dark background. The menus themselves are HTML (online.js),
 //  since typing names and codes is easier in real text boxes.
@@ -1558,7 +1650,7 @@ class GameOverScene extends Phaser.Scene {
     }
 
     // (The keys do nothing while the leaderboard is open on top.)
-    const playAgain = () => { if (!Leaderboard.isOpen()) this.scene.start('Game', { mode: data.mode, color: data.color }); };
+    const playAgain = () => { if (!Leaderboard.isOpen()) this.scene.start('Game', { mode: data.mode, color: data.color, snakes: data.snakes }); };
     const changeMode = () => { if (!Leaderboard.isOpen()) this.scene.start('Start'); };
 
     // Leaderboard: if this score made the top 10, ask for initials.
