@@ -1,0 +1,27 @@
+# Step 1: Setup guide (Windows)
+
+## 1. Create the GitHub repo (2 minutes)
+1. Go to https://github.com/new
+2. Repository name: `snake-game`
+3. Choose **Public** (free GitHub Pages hosting needs a public repo on a free account).
+4. Tick **Add a README file**, then click **Create repository**.
+5. Tell Claude in the thread that it's created. Claude will add the starter files.
+
+## 2. Install your tools
+- **VS Code** (code editor): https://code.visualstudio.com/ — install with the default options.
+- **Git for Windows** (lets you download and upload your code): https://git-scm.com/download/win — default options are fine.
+- In VS Code, open the Extensions panel (Ctrl+Shift+X) and install **Live Server**. It lets you run the game in your browser and refreshes it every time you save.
+
+## 3. Turn on GitHub Pages (after Claude adds the files)
+1. In your repo on GitHub, open **Settings → Pages**.
+2. Under "Build and deployment", set Source to **Deploy from a branch**, branch **main**, folder **/ (root)**, then **Save**.
+3. After about a minute, your game is live at `https://<your-username>.github.io/snake-game/`. That's the link to share.
+
+## 4. Get the code onto your PC
+1. In VS Code, press Ctrl+Shift+P, type **Git: Clone**, and paste your repo's URL (`https://github.com/<your-username>/snake-game`).
+2. Pick a folder, then click **Open** when it asks.
+3. Right-click `index.html` and choose **Open with Live Server**. You should see "Snake — Setup works!"
+
+## What the files are
+- `index.html` — the web page. It loads Phaser (the game framework) and your game code.
+- `game.js` — your game. This is where we'll write Snake in step 2.
