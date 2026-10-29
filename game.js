@@ -201,6 +201,7 @@ class GameScene extends Phaser.Scene {
     // Food: a list of spots, so there can be more than one piece at a time.
     this.computerSnakes = [];
     this.foods = [];
+    this.leftovers = []; // pieces of crashed computer snakes, free to eat (see 3h)
     for (let i = 0; i < this.mode.food; i++) this.foods.push(this.freeSpot());
 
     // Computer snakes (see section 3h).
@@ -302,7 +303,8 @@ class GameScene extends Phaser.Scene {
   isTaken(spot) {
     const allBodies = [this.snake, ...this.computerSnakes.filter(cs => cs.alive).map(cs => cs.body)];
     return allBodies.some(body => body.some(part => part.x === spot.x && part.y === spot.y))
-      || (this.foods || []).some(food => food.x === spot.x && food.y === spot.y);
+      || (this.foods || []).some(food => food.x === spot.x && food.y === spot.y)
+      || (this.leftovers || []).some(piece => piece.x === spot.x && piece.y === spot.y);
   }
 
   // ----- 3e. Food -----
@@ -318,14 +320,22 @@ class GameScene extends Phaser.Scene {
     return spot;
   }
 
-  // If there's food on this spot, eat it, put a new piece somewhere else,
-  // and return true. Otherwise return false.
+  // If there's food on this spot, eat it and return true. Otherwise return false.
   eatFoodAt(spot) {
+    // Red food: eat it and put a new piece somewhere else.
     const i = this.foods.findIndex(food => food.x === spot.x && food.y === spot.y);
-    if (i === -1) return false;
-    this.foods.splice(i, 1);
-    this.foods.push(this.freeSpot());
-    return true;
+    if (i !== -1) {
+      this.foods.splice(i, 1);
+      this.foods.push(this.freeSpot());
+      return true;
+    }
+    // A leftover piece of a crashed snake: eat it. These don't come back.
+    const j = this.leftovers.findIndex(piece => piece.x === spot.x && piece.y === spot.y);
+    if (j !== -1) {
+      this.leftovers.splice(j, 1);
+      return true;
+    }
+    return false;
   }
 
   // ----- 3f. Drawing -----
@@ -335,6 +345,12 @@ class GameScene extends Phaser.Scene {
     // Food: red squares.
     this.graphics.fillStyle(0xff4444);
     this.foods.forEach(food => this.graphics.fillRect(food.x * CELL, food.y * CELL, CELL - 1, CELL - 1));
+
+    // Leftovers from crashed snakes: smaller squares in that snake's color.
+    this.leftovers.forEach(piece => {
+      this.graphics.fillStyle(piece.color);
+      this.graphics.fillRect(piece.x * CELL + 4, piece.y * CELL + 4, CELL - 9, CELL - 9);
+    });
 
     // Computer snakes: each in its own color, with a white dot on the head.
     this.computerSnakes.filter(cs => cs.alive).forEach(cs => {
@@ -411,9 +427,11 @@ GameScene.prototype.moveComputerSnakes = function () {
       return !this.hitsWall(spot) && !this.isSnakeOn(spot);
     });
 
-    // Nowhere safe to go? It's boxed in and crashes.
+    // Nowhere safe to go? It's boxed in and crashes. Every square of its
+    // body is left behind as a piece of food anyone can eat.
     if (safe.length === 0) {
       cs.alive = false;
+      cs.body.forEach(part => this.leftovers.push({ x: part.x, y: part.y, color: cs.color }));
       this.time.delayedCall(RESPAWN_AFTER, () => {
         this.computerSnakes.splice(this.computerSnakes.indexOf(cs), 1);
         this.spawnComputerSnake(cs.color);
@@ -448,8 +466,9 @@ GameScene.prototype.isSnakeOn = function (spot) {
 };
 
 // How many squares away is the closest piece of food?
+// (Leftovers count as food too, so computer snakes go after them.)
 GameScene.prototype.distanceToFood = function (spot) {
-  return Math.min(...this.foods.map(food => Math.abs(food.x - spot.x) + Math.abs(food.y - spot.y)));
+  return Math.min(...[...this.foods, ...this.leftovers].map(food => Math.abs(food.x - spot.x) + Math.abs(food.y - spot.y)));
 };
 
 
