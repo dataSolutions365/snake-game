@@ -39,6 +39,32 @@ service cloud.firestore {
 
 3. Click **Publish**.
 
+## 3b. Create the live database (for online rooms and chat)
+Firestore (above) is great for the leaderboard but too slow for live play,
+so online rooms use Firebase's other database, the Realtime Database.
+1. In the left menu, open **Build → Realtime Database**.
+2. Click **Create Database**. Location: **United States**. Click **Next**.
+3. Choose **Start in locked mode**. Click **Enable**.
+4. Open the **Rules** tab, delete everything in the box and paste this in:
+
+```
+{
+  "rules": {
+    "rooms": {
+      "$code": {
+        // Anyone who knows a room's 5-letter code can join it.
+        ".read": "$code.matches(/^[A-Z0-9]{5}$/)",
+        ".write": "$code.matches(/^[A-Z0-9]{5}$/)"
+      }
+    }
+  }
+}
+```
+
+5. Click **Publish**.
+
+Do this step **before** step 4, so the config you copy includes the database address (`databaseURL`).
+
 ## 4. Connect it to the game
 1. Click the **gear icon** next to "Project Overview" → **Project settings**.
 2. Scroll to **Your apps** and click the **web icon** `</>`.
