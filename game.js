@@ -86,8 +86,9 @@ const LIGHTS_OUT_SEE = 4;
 const ROCK_SMASH_COSTS = 2;      // squares you lose for smashing through a rock
 
 // Mazes: now and then a maze shows up on a screen nobody is on.
-// Hit one of its walls and you crash. Go in one gap and out the other
-// and you get the prize. Only in modes with mazes: true (they need a big world).
+// Hit one of its walls and you crash. Go in the green entrance and out
+// the red exit and you get the prize. Only in modes with mazes: true
+// (they need a big world).
 const MAZE_ACROSS = 7;       // most paths across and down (fewer if the screen is small)
 const MAZE_DOWN = 5;
 const MAZE_PATH_WIDTH = 2;   // how many squares wide the paths are (walls are 1)
@@ -309,7 +310,7 @@ class StartScene extends Phaser.Scene {
     Object.values(POWER_UPS).filter(pu => pu.good === false).forEach(pu => downs.push(pu.icon + '  ' + pu.about));
     const extras = [];
     Object.values(POWER_UPS).filter(pu => pu.good === null).forEach(pu => extras.push(pu.icon + '  ' + pu.about));
-    extras.push('🧩  Mazes: find orange on the map.', '    Hit a wall: crash.', '    Get through: +' + MAZE_PRIZE + '!',
+    extras.push('🧩  Mazes: find orange on the map.', '    In green, out red: +' + MAZE_PRIZE + '!', '    Hit a wall: crash.',
       '', 'All but ⭐ and 💀 last ' + EFFECT_LASTS / 1000 + ' seconds.');
 
     const box = this.add.container(0, 0).setDepth(10).setVisible(false);
@@ -1434,7 +1435,8 @@ GameScene.prototype.fatCells = function (p) {
 
 // =====================================================================
 //  3k. MAZES
-//  A maze is a block of walls with a gap on its left and right sides.
+//  A maze is a block of walls with a green entrance on its left side and
+//  a red exit on its right. Go in the green one and out the red one to win.
 //  hitsWall() (section 3d) counts its walls, so snakes crash into them
 //  and computer snakes steer around them.
 // =====================================================================
@@ -1546,9 +1548,10 @@ GameScene.prototype.checkMaze = function (p) {
   const onGap = gap => gap.some(spot => head.x === spot.x && head.y === spot.y);
   const inside = head.x >= m.left && head.x < m.left + m.w && head.y >= m.top && head.y < m.top + m.h;
   if (!inside) { p.inMazeFrom = null; return; }
+  // In through the green entrance (A), out through the red exit (B).
   if (onGap(m.gapA) || onGap(m.gapB)) {
     const gap = onGap(m.gapA) ? 'A' : 'B';
-    if (p.inMazeFrom && p.inMazeFrom !== gap) {
+    if (p.inMazeFrom === 'A' && gap === 'B') {
       // Made it through!
       p.grow += MAZE_PRIZE;
       p.score += MAZE_PRIZE;
@@ -1571,9 +1574,11 @@ GameScene.prototype.drawMaze = function () {
     const [x, y] = key.split(',').map(Number);
     g.fillRect(x * CELL, y * CELL, CELL - 1, CELL - 1);
   });
-  // The two gaps glow green.
-  g.fillStyle(0x7cfc00, 0.4);
-  [...m.gapA, ...m.gapB].forEach(spot => g.fillRect(spot.x * CELL, spot.y * CELL, CELL - 1, CELL - 1));
+  // The entrance glows green and the exit red.
+  g.fillStyle(0x7cfc00, 0.6);
+  m.gapA.forEach(spot => g.fillRect(spot.x * CELL, spot.y * CELL, CELL - 1, CELL - 1));
+  g.fillStyle(0xff4444, 0.6);
+  m.gapB.forEach(spot => g.fillRect(spot.x * CELL, spot.y * CELL, CELL - 1, CELL - 1));
 };
 
 // A message across the middle of the screen for a few seconds.
