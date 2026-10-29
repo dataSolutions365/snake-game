@@ -28,9 +28,11 @@ const HEIGHT = ROWS * CELL;
 
 // Game modes. The player picks one on the start screen.
 // To add a new mode (like HARD), copy one of these blocks and change the numbers.
+// players: 2 means two people on one keyboard (not shown on phones).
 const MODES = {
-  easy:   { name: 'EASY',   about: 'Just you',         computerSnakes: 0, food: 1 },
-  medium: { name: 'MEDIUM', about: 'Computer snakes',  computerSnakes: 2, food: 3 },
+  easy:    { name: 'EASY',      about: 'Just you',         players: 1, computerSnakes: 0, food: 1 },
+  medium:  { name: 'MEDIUM',    about: 'Computer snakes',  players: 1, computerSnakes: 2, food: 3 },
+  twoplayer: { name: '2 PLAYERS', about: 'WASD vs arrows', players: 2, computerSnakes: 0, food: 2 },
 };
 
 // Colors the player can pick for their snake. "head" is a lighter shade for the head.
@@ -45,6 +47,11 @@ const PLAYER_COLORS = [
   { name: 'Orange', body: 0xffa500, head: 0xffd27a },
   { name: 'White',  body: 0xdddddd, head: 0xffffff },
 ];
+
+// Player 2's color: the next color in the list after player 1's.
+function secondColor(firstIndex) {
+  return PLAYER_COLORS[(firstIndex + 1) % PLAYER_COLORS.length];
+}
 
 // Computer snakes use these, skipping whichever one the player picked.
 const COMPUTER_COLORS = [0x3fa9f5, 0xffa500, 0xb36bff, 0xff66cc, 0x00ced1]; // blue, orange, purple, pink, cyan
@@ -79,9 +86,9 @@ const LINK = new URLSearchParams(window.location.search);
 let quickLinkUsed = false; // only jump in once, so "Change mode" still shows the start screen
 
 // A clickable/tappable button: a box with text on it.
-function makeButton(scene, x, y, label, color, onClick) {
+function makeButton(scene, x, y, label, color, onClick, width = 280, fontSize = '22px') {
   const button = scene.add.text(x, y, label, {
-    fontSize: '22px', color: '#111111', backgroundColor: color, padding: { x: 18, y: 10 }, align: 'center', fixedWidth: 280,
+    fontSize, color: '#111111', backgroundColor: color, padding: { x: 18, y: 10 }, align: 'center', fixedWidth: width,
   }).setOrigin(0.5).setInteractive({ useHandCursor: true });
   button.on('pointerdown', onClick);
   return button;
@@ -98,6 +105,8 @@ class StartScene extends Phaser.Scene {
   constructor() { super('Start'); } // 'Start' is this screen's name
 
   create() {
+    this.p2Label = null;
+
     // Opened from a quick link? Jump straight into the game.
     const linkMode = (LINK.get('mode') || '').toLowerCase();
     if (MODES[linkMode] && !quickLinkUsed) {
@@ -117,18 +126,30 @@ class StartScene extends Phaser.Scene {
 
     this.add.text(WIDTH / 2, HEIGHT / 2 + 25, 'Choose a mode:', { fontSize: '20px', color: '#ffffff' }).setOrigin(0.5);
 
-    // One button per mode, stacked down the screen. Keyboard: 1, 2, ...
-    Object.keys(MODES).forEach((key, i) => {
+    // One button per mode. Keyboard: 1, 2, 3...
+    // On a wide screen they sit side by side; on a phone they stack down the screen.
+    // Two-player modes are left off phones, since they need a keyboard.
+    const modeKeys = Object.keys(MODES).filter(key => !(TOUCH && MODES[key].players === 2));
+    const buttonColors = ['#7cfc00', '#ffa500', '#3fa9f5', '#ff66cc'];
+    const keyNames = ['ONE', 'TWO', 'THREE', 'FOUR'];
+    modeKeys.forEach((key, i) => {
       const mode = MODES[key];
-      const y = HEIGHT / 2 + 75 + i * 105;
+      const x = PORTRAIT ? WIDTH / 2 : WIDTH / 2 + (i - (modeKeys.length - 1) / 2) * 260;
+      const y = PORTRAIT ? HEIGHT / 2 + 75 + i * 105 : HEIGHT / 2 + 90;
       // Tell the game which mode, and which color the player picked.
       const start = () => this.scene.start('Game', { mode: key, color: this.colorChoice });
-      makeButton(this, WIDTH / 2, y, (TOUCH ? '' : (i + 1) + '. ') + mode.name + '\n' + mode.about,
-        i === 0 ? '#7cfc00' : '#ffa500', start);
-      this.add.text(WIDTH / 2, y + 50, 'Best: ' + loadHighScore(key), { fontSize: '16px', color: '#aaaaaa' }).setOrigin(0.5);
-      const keyNames = ['ONE', 'TWO', 'THREE', 'FOUR'];
+      makeButton(this, x, y, (TOUCH ? '' : (i + 1) + '. ') + mode.name + '\n' + mode.about,
+        buttonColors[i % buttonColors.length], start, PORTRAIT ? 280 : 210, PORTRAIT ? '22px' : '19px');
+      const under = this.add.text(x, y + 50, 'Best: ' + loadHighScore(key), { fontSize: '16px', color: '#aaaaaa' }).setOrigin(0.5);
+      if (mode.players === 2) this.p2Label = under; // filled in by update() below
       this.input.keyboard.once('keydown-' + keyNames[i], start);
     });
+  }
+
+  // Phaser calls update() about 60 times per second. Keep player 2's
+  // color up to date as player 1 picks theirs.
+  update() {
+    if (this.p2Label) this.p2Label.setText('P2 is ' + secondColor(this.colorChoice).name);
   }
 
   // A row of colored squares. Click or tap one to pick it (on a computer,
@@ -177,25 +198,27 @@ class GameScene extends Phaser.Scene {
     this.modeKey = data.mode;
     this.mode = MODES[data.mode];
     this.colorChoice = data.color;
-    this.color = PLAYER_COLORS[data.color];
-
-    // The snake is a list of grid positions. Item 0 is the head.
-    // It starts 3 squares long in the middle of the board, facing right.
-    const midX = Math.floor(COLS / 2), midY = Math.floor(ROWS / 2);
-    this.snake = [
-      { x: midX, y: midY },
-      { x: midX - 1, y: midY },
-      { x: midX - 2, y: midY },
-    ];
-    this.direction = { x: 1, y: 0 };     // the way the snake is moving now
-    this.nextDirection = { x: 1, y: 0 }; // the way the player last pressed
 
     // A Graphics object is like a blank canvas we can draw shapes on.
     this.graphics = this.add.graphics();
 
+    // The players. Each one is a snake: a list of grid positions, item 0 is the head.
+    // With one player it starts in the middle. With two, player 1 starts at the
+    // top facing right and player 2 at the bottom facing left.
+    const midX = Math.floor(COLS / 2), midY = Math.floor(ROWS / 2);
+    const colors = [PLAYER_COLORS[data.color], secondColor(data.color)];
+    this.players = [];
+    if (this.mode.players === 2) {
+      const topY = Math.floor(ROWS / 3), bottomY = Math.floor(ROWS * 2 / 3);
+      this.players.push(this.makePlayer('P1', colors[0], [{ x: midX, y: topY }, { x: midX - 1, y: topY }, { x: midX - 2, y: topY }], { x: 1, y: 0 }));
+      this.players.push(this.makePlayer('P2', colors[1], [{ x: midX, y: bottomY }, { x: midX + 1, y: bottomY }, { x: midX + 2, y: bottomY }], { x: -1, y: 0 }));
+    } else {
+      this.players.push(this.makePlayer('You', colors[0], [{ x: midX, y: midY }, { x: midX - 1, y: midY }, { x: midX - 2, y: midY }], { x: 1, y: 0 }));
+    }
+
     // Score, shown in the top-left corner.
-    this.score = 0;
-    this.scoreText = this.add.text(10, 10, 'Score: 0', { fontSize: '20px', color: '#ffffff' });
+    this.scoreText = this.add.text(10, 10, '', { fontSize: '20px', color: '#ffffff' });
+    this.updateScoreText();
 
     this.setupControls();
 
@@ -206,20 +229,39 @@ class GameScene extends Phaser.Scene {
     for (let i = 0; i < this.mode.food; i++) this.foods.push(this.freeSpot());
 
     // Computer snakes (see section 3h).
-    // They get the computer colors in order, skipping the player's color.
-    const computerColors = COMPUTER_COLORS.filter(c => c !== this.color.body);
+    // They get the computer colors in order, skipping the players' colors.
+    const computerColors = COMPUTER_COLORS.filter(c => !this.players.some(p => p.color.body === c));
     for (let i = 0; i < this.mode.computerSnakes; i++) this.spawnComputerSnake(computerColors[i % computerColors.length]);
 
-    // Run moveSnake() over and over on a timer, instead of every frame,
-    // so the snake moves one square at a time.
-    this.timer = this.time.addEvent({ delay: MOVE_EVERY, loop: true, callback: this.moveSnake, callbackScope: this });
+    // Run step() over and over on a timer, instead of every frame,
+    // so the snakes move one square at a time.
+    this.timer = this.time.addEvent({ delay: MOVE_EVERY, loop: true, callback: this.step, callbackScope: this });
 
     this.draw();
   }
 
-  // ----- 3b. Controls: arrow keys and swipes -----
+  // Everything we need to know about one player's snake.
+  makePlayer(name, color, body, direction) {
+    return {
+      name, color, body,
+      direction,               // the way the snake is moving now
+      nextDirection: direction, // the way the player last pressed
+      score: 0,
+      crashed: false,
+    };
+  }
+
+  updateScoreText() {
+    if (this.players.length === 1) this.scoreText.setText('Score: ' + this.players[0].score);
+    else this.scoreText.setText(this.players.map(p => p.name + ': ' + p.score).join('    '));
+  }
+
+  // ----- 3b. Controls -----
+  // One player: arrow keys or swipes.
+  // Two players: player 1 uses W A S D, player 2 uses the arrow keys.
   setupControls() {
     this.cursors = this.input.keyboard.createCursorKeys();
+    this.wasd = this.input.keyboard.addKeys('W,A,S,D');
 
     // Swipes: remember where the finger went down, and when it lifts,
     // turn whichever way it moved the most (left/right or up/down).
@@ -230,55 +272,70 @@ class GameScene extends Phaser.Scene {
       const dy = pointer.y - this.swipeStart.y;
       this.swipeStart = null;
       if (Math.max(Math.abs(dx), Math.abs(dy)) < 20) return; // too short, just a tap
-      if (Math.abs(dx) > Math.abs(dy)) this.turn(dx > 0 ? 1 : -1, 0);
-      else this.turn(0, dy > 0 ? 1 : -1);
+      if (Math.abs(dx) > Math.abs(dy)) this.turn(this.players[0], dx > 0 ? 1 : -1, 0);
+      else this.turn(this.players[0], 0, dy > 0 ? 1 : -1);
     });
   }
 
   // Phaser calls update() about 60 times per second. We check the keys here.
   // We only remember the choice; the snake actually turns on its next step.
   update() {
-    if (this.cursors.left.isDown) this.turn(-1, 0);
-    if (this.cursors.right.isDown) this.turn(1, 0);
-    if (this.cursors.up.isDown) this.turn(0, -1);
-    if (this.cursors.down.isDown) this.turn(0, 1);
+    const arrowsPlayer = this.players[this.players.length - 1]; // the only player, or player 2
+    if (this.cursors.left.isDown) this.turn(arrowsPlayer, -1, 0);
+    if (this.cursors.right.isDown) this.turn(arrowsPlayer, 1, 0);
+    if (this.cursors.up.isDown) this.turn(arrowsPlayer, 0, -1);
+    if (this.cursors.down.isDown) this.turn(arrowsPlayer, 0, 1);
+
+    if (this.players.length === 2) {
+      const p1 = this.players[0];
+      if (this.wasd.A.isDown) this.turn(p1, -1, 0);
+      if (this.wasd.D.isDown) this.turn(p1, 1, 0);
+      if (this.wasd.W.isDown) this.turn(p1, 0, -1);
+      if (this.wasd.S.isDown) this.turn(p1, 0, 1);
+    }
   }
 
-  // Used by both the arrow keys and swipes.
-  turn(x, y) {
+  // Used by the keys and swipes.
+  turn(player, x, y) {
     // Don't let the snake turn straight back into itself.
-    if (x === -this.direction.x && y === -this.direction.y) return;
-    this.nextDirection = { x, y };
+    if (x === -player.direction.x && y === -player.direction.y) return;
+    player.nextDirection = { x, y };
   }
 
-  // ----- 3c. Movement: one step of the snake -----
-  moveSnake() {
-    this.direction = this.nextDirection;
+  // ----- 3c. Movement: one step of the game -----
+  step() {
+    // First work out where every player's new head goes:
+    // one square in their current direction.
+    this.players.forEach(p => {
+      p.direction = p.nextDirection;
+      p.newHead = { x: p.body[0].x + p.direction.x, y: p.body[0].y + p.direction.y };
+    });
 
-    // Work out where the new head goes: one square in the current direction.
-    const head = this.snake[0];
-    const newHead = {
-      x: head.x + this.direction.x,
-      y: head.y + this.direction.y,
-    };
-
-    // Crashed into a wall, itself, or a computer snake? Then the game is over.
-    if (this.hitsWall(newHead) || this.hitsSelf(newHead) || this.hitsComputerSnake(newHead)) {
+    // Then check who crashed: into a wall, any snake, or (with two players)
+    // head-on into the other player's head.
+    this.players.forEach(p => {
+      const headOn = this.players.some(other => other !== p && other.newHead.x === p.newHead.x && other.newHead.y === p.newHead.y);
+      if (this.hitsWall(p.newHead) || this.hitsPlayer(p.newHead) || this.hitsComputerSnake(p.newHead) || headOn) {
+        p.crashed = true;
+      }
+    });
+    if (this.players.some(p => p.crashed)) {
       this.gameOver();
       return;
     }
 
     // Moving = add a new head at the front, remove the last tail square.
-    this.snake.unshift(newHead);
-
-    if (this.eatFoodAt(newHead)) {
-      // Ate the food! Skipping pop() leaves the tail where it was,
-      // so the snake ends up one square longer.
-      this.score += 1;
-      this.scoreText.setText('Score: ' + this.score);
-    } else {
-      this.snake.pop();
-    }
+    this.players.forEach(p => {
+      p.body.unshift(p.newHead);
+      if (this.eatFoodAt(p.newHead)) {
+        // Ate the food! Skipping pop() leaves the tail where it was,
+        // so the snake ends up one square longer.
+        p.score += 1;
+      } else {
+        p.body.pop();
+      }
+    });
+    this.updateScoreText();
 
     // Now the computer snakes take their step.
     this.moveComputerSnakes();
@@ -291,9 +348,10 @@ class GameScene extends Phaser.Scene {
     return spot.x < 0 || spot.x >= COLS || spot.y < 0 || spot.y >= ROWS;
   }
 
-  hitsSelf(spot) {
-    // The last tail square is about to move out of the way, so skip it.
-    return this.snake.slice(0, -1).some(part => part.x === spot.x && part.y === spot.y);
+  // Is any player's snake on this square? Each tail square is about to move
+  // out of the way, so it doesn't count.
+  hitsPlayer(spot) {
+    return this.players.some(p => p.body.slice(0, -1).some(part => part.x === spot.x && part.y === spot.y));
   }
 
   hitsComputerSnake(spot) {
@@ -302,7 +360,7 @@ class GameScene extends Phaser.Scene {
 
   // Is anything (any snake, or food) on this square?
   isTaken(spot) {
-    const allBodies = [this.snake, ...this.computerSnakes.filter(cs => cs.alive).map(cs => cs.body)];
+    const allBodies = [...this.players.map(p => p.body), ...this.computerSnakes.filter(cs => cs.alive).map(cs => cs.body)];
     return allBodies.some(body => body.some(part => part.x === spot.x && part.y === spot.y))
       || (this.foods || []).some(food => food.x === spot.x && food.y === spot.y)
       || (this.leftovers || []).some(piece => piece.x === spot.x && piece.y === spot.y);
@@ -361,28 +419,42 @@ class GameScene extends Phaser.Scene {
       this.graphics.fillRect(cs.body[0].x * CELL + 6, cs.body[0].y * CELL + 6, CELL - 13, CELL - 13);
     });
 
-    // Player's snake, in the color they picked. The head is a lighter shade.
-    this.snake.forEach((part, i) => {
-      this.graphics.fillStyle(i === 0 ? this.color.head : this.color.body);
-      // -1 leaves a thin gap so you can see each square.
-      this.graphics.fillRect(part.x * CELL, part.y * CELL, CELL - 1, CELL - 1);
+    // Players' snakes, in their colors. The head is a lighter shade.
+    this.players.forEach(p => {
+      p.body.forEach((part, i) => {
+        this.graphics.fillStyle(i === 0 ? p.color.head : p.color.body);
+        // -1 leaves a thin gap so you can see each square.
+        this.graphics.fillRect(part.x * CELL, part.y * CELL, CELL - 1, CELL - 1);
+      });
     });
   }
 
   // ----- 3g. Game over -----
   gameOver() {
-    this.timer.remove(); // stop the snake moving
+    this.timer.remove(); // stop everything moving
     this.cameras.main.shake(200, 0.01);
 
-    const best = loadHighScore(this.modeKey);
-    const newBest = this.score > best;
-    if (newBest) saveHighScore(this.modeKey, this.score);
+    // What to send to the game over screen.
+    const result = { mode: this.modeKey, color: this.colorChoice };
 
-    // Wait a moment so you can see where you crashed, then show the
-    // game over screen. The { } part passes the score along to it.
-    this.time.delayedCall(700, () => {
-      this.scene.start('GameOver', { mode: this.modeKey, color: this.colorChoice, score: this.score, best: Math.max(best, this.score), newBest });
-    });
+    if (this.players.length === 1) {
+      const score = this.players[0].score;
+      const best = loadHighScore(this.modeKey);
+      result.score = score;
+      result.newBest = score > best;
+      result.best = Math.max(best, score);
+      if (result.newBest) saveHighScore(this.modeKey, score);
+    } else {
+      // Two players: whoever didn't crash wins. If both crashed, it's a draw.
+      const survivors = this.players.filter(p => !p.crashed);
+      result.winner = survivors.length === 1 ? survivors[0].name : null;
+      result.winnerColor = survivors.length === 1 ? survivors[0].color.head : null;
+      result.scores = this.players.map(p => p.name + ': ' + p.score).join('    ');
+    }
+
+    // Wait a moment so you can see where the crash was, then show the
+    // game over screen. The { } part passes the results along to it.
+    this.time.delayedCall(700, () => this.scene.start('GameOver', result));
   }
 }
 
@@ -390,7 +462,7 @@ class GameScene extends Phaser.Scene {
 // =====================================================================
 //  3h. COMPUTER SNAKES
 //  These are added onto the GameScene class above (that's what
-//  "GameScene.prototype" means), so they can use this.snake, this.foods, etc.
+//  "GameScene.prototype" means), so they can use this.players, this.foods, etc.
 //  Keeping them here makes the "brain" easy to find.
 // =====================================================================
 
@@ -400,7 +472,7 @@ GameScene.prototype.spawnComputerSnake = function (color) {
     const head = this.freeSpot();
     const tail1 = { x: head.x - 1, y: head.y };
     const tail2 = { x: head.x - 2, y: head.y };
-    const farFromPlayer = Math.abs(head.x - this.snake[0].x) + Math.abs(head.y - this.snake[0].y) > 8;
+    const farFromPlayer = this.players.every(p => Math.abs(head.x - p.body[0].x) + Math.abs(head.y - p.body[0].y) > 8);
     if (farFromPlayer && !this.hitsWall(tail2) && !this.isTaken(tail1) && !this.isTaken(tail2)) {
       this.computerSnakes.push({ body: [head, tail1, tail2], direction: { x: 1, y: 0 }, color, alive: true });
       return;
@@ -475,11 +547,6 @@ GameScene.prototype.crashComputerSnake = function (cs) {
   });
 };
 
-// Is the player's snake on this square?
-GameScene.prototype.hitsPlayer = function (spot) {
-  return this.snake.some(part => part.x === spot.x && part.y === spot.y);
-};
-
 // How many squares away is the closest piece of food?
 // (Leftovers count as food too, so computer snakes go after them.)
 GameScene.prototype.distanceToFood = function (spot) {
@@ -494,13 +561,22 @@ GameScene.prototype.distanceToFood = function (spot) {
 class GameOverScene extends Phaser.Scene {
   constructor() { super('GameOver'); }
 
-  // data is the { mode, score, best, newBest } sent from the game screen.
+  // data is what the game screen sent: the mode and color, plus either
+  // { score, best, newBest } for one player or { winner, winnerColor, scores } for two.
   create(data) {
     this.add.text(WIDTH / 2, HEIGHT / 2 - 120, 'GAME OVER', { fontSize: '52px', color: '#ff4444' }).setOrigin(0.5);
     this.add.text(WIDTH / 2, HEIGHT / 2 - 65, MODES[data.mode].name + ' mode', { fontSize: '18px', color: '#aaaaaa' }).setOrigin(0.5);
-    this.add.text(WIDTH / 2, HEIGHT / 2 - 25, 'Score: ' + data.score, { fontSize: '28px', color: '#ffffff' }).setOrigin(0.5);
-    this.add.text(WIDTH / 2, HEIGHT / 2 + 15, data.newBest ? 'New best score!' : 'Best: ' + data.best,
-      { fontSize: '20px', color: data.newBest ? '#ffff66' : '#cccccc' }).setOrigin(0.5);
+
+    if (MODES[data.mode].players === 1) {
+      this.add.text(WIDTH / 2, HEIGHT / 2 - 25, 'Score: ' + data.score, { fontSize: '28px', color: '#ffffff' }).setOrigin(0.5);
+      this.add.text(WIDTH / 2, HEIGHT / 2 + 15, data.newBest ? 'New best score!' : 'Best: ' + data.best,
+        { fontSize: '20px', color: data.newBest ? '#ffff66' : '#cccccc' }).setOrigin(0.5);
+    } else {
+      const winnerText = data.winner ? data.winner + ' WINS!' : "It's a draw!";
+      const winnerColor = data.winner ? '#' + data.winnerColor.toString(16).padStart(6, '0') : '#ffffff';
+      this.add.text(WIDTH / 2, HEIGHT / 2 - 25, winnerText, { fontSize: '32px', color: winnerColor }).setOrigin(0.5);
+      this.add.text(WIDTH / 2, HEIGHT / 2 + 15, data.scores, { fontSize: '20px', color: '#cccccc' }).setOrigin(0.5);
+    }
 
     const playAgain = () => this.scene.start('Game', { mode: data.mode, color: data.color }); // same mode and color again
     const changeMode = () => this.scene.start('Start');
