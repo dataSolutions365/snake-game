@@ -12,15 +12,100 @@
     if (MAINTENANCE_MODE) location.replace('maintenance.html');
   </script>
   <style>
-    body { margin: 0; background: #1b1b1b; height: 100vh; height: 100dvh; overflow: hidden; }
+    body { margin: 0; background: #1b1b1b; height: 100vh; height: 100dvh; overflow: hidden; font-family: monospace; color: #fff; }
     /* Stop the page from scrolling or zooming when you swipe on a phone */
     html, body, canvas { touch-action: none; overscroll-behavior: none; user-select: none; -webkit-user-select: none; }
+    input { user-select: text; -webkit-user-select: text; touch-action: auto; }
+
+    /* ----- Online menus, drawn on top of the game ----- */
+    #online {
+      position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: rgba(20, 20, 20, 0.96); padding: 16px; box-sizing: border-box; overflow-y: auto; touch-action: auto;
+    }
+    #online[hidden], #online [hidden], #chat-panel[hidden], #chat-toggle[hidden] { display: none !important; }
+    .panel { width: 100%; max-width: 360px; text-align: center; }
+    .panel h2 { color: #7cfc00; font-size: 32px; margin: 0 0 16px; }
+    .panel p { color: #ccc; }
+    .panel input { width: 100%; box-sizing: border-box; font: 20px monospace; padding: 10px; margin: 6px 0; border-radius: 6px; border: none; }
+    .btn {
+      display: block; width: 100%; font: 20px monospace; padding: 12px; margin: 8px 0; border: none; border-radius: 6px;
+      cursor: pointer; color: #111; background: #7cfc00;
+    }
+    .btn.gray { background: #ccc; }
+    .btn.blue { background: #3fa9f5; }
+    .btn:disabled { opacity: 0.4; cursor: default; }
+    .or { color: #888; margin: 12px 0; }
+    .error { color: #ff6666; min-height: 1.2em; }
+    #room-code { font-size: 44px; letter-spacing: 6px; color: #ffff66; margin: 4px 0 8px; }
+    #player-list { list-style: none; padding: 0; margin: 12px 0; text-align: left; }
+    #player-list li { padding: 6px 0; font-size: 18px; }
+    .dot { display: inline-block; width: 14px; height: 14px; margin-right: 10px; vertical-align: middle; }
+
+    /* ----- Chat ----- */
+    #chat-panel { width: 100%; max-width: 360px; margin-top: 12px; background: #111; border-radius: 8px; padding: 8px; box-sizing: border-box; }
+    #chat-panel.floating { position: fixed; right: 8px; bottom: 64px; width: calc(100% - 16px); max-width: 340px; z-index: 5; opacity: 0.95; }
+    #chat-log { height: 120px; overflow-y: auto; text-align: left; font-size: 15px; line-height: 1.4; padding: 4px; }
+    #quick-chat { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+    #quick-chat button { font: 14px monospace; padding: 6px 8px; border: none; border-radius: 4px; background: #333; color: #fff; cursor: pointer; }
+    .chat-row { display: flex; gap: 6px; }
+    .chat-row input { flex: 1; min-width: 0; font: 16px monospace; padding: 8px; border-radius: 4px; border: none; }
+    .chat-row button { font: 16px monospace; padding: 8px 12px; border: none; border-radius: 4px; background: #7cfc00; cursor: pointer; }
+    #chat-toggle {
+      position: fixed; right: 12px; bottom: 12px; z-index: 6; font-size: 26px; width: 52px; height: 52px;
+      border-radius: 50%; border: none; background: #333; cursor: pointer;
+    }
   </style>
   <!-- Phaser, the game framework, loaded from a free CDN -->
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+  <!-- Firebase, for online play and the leaderboard -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 </head>
 <body>
-  <!-- Bump the ?v= number when game.js changes so browsers load the new version -->
-  <script src="game.js?v=11"></script>
+  <!-- Online menus. online.js shows and hides these. -->
+  <div id="online" hidden>
+    <div class="panel" id="online-menu" hidden>
+      <h2>PLAY ONLINE</h2>
+      <p>Your name</p>
+      <input id="name-input" maxlength="10" placeholder="Up to 10 letters" autocomplete="off">
+      <button class="btn" id="create-button">Create a room</button>
+      <div class="or">or join a friend's room</div>
+      <input id="code-input" maxlength="5" placeholder="Room code" autocomplete="off" style="text-transform: uppercase">
+      <button class="btn blue" id="join-button">Join room</button>
+      <div class="error" id="online-error"></div>
+      <button class="btn gray" id="menu-back-button">Back</button>
+    </div>
+
+    <div class="panel" id="online-lobby" hidden>
+      <p>Room code</p>
+      <div id="room-code"></div>
+      <button class="btn gray" id="copy-link-button">Copy invite link</button>
+      <ul id="player-list"></ul>
+      <p id="lobby-hint"></p>
+      <button class="btn" id="start-button">Start game</button>
+      <button class="btn gray" id="leave-button">Leave room</button>
+    </div>
+
+    <div class="panel" id="online-message" hidden>
+      <p id="message-text"></p>
+      <button class="btn" id="message-ok-button">OK</button>
+    </div>
+
+  </div>
+  <!-- Chat. online.js moves this into the lobby, or floats it over the game. -->
+  <div id="chat-panel" hidden>
+    <div id="chat-log"></div>
+    <div id="quick-chat"></div>
+    <div class="chat-row">
+      <input id="chat-input" maxlength="80" placeholder="Say something nice" autocomplete="off">
+      <button id="chat-send">Send</button>
+    </div>
+  </div>
+  <button id="chat-toggle" hidden>💬</button>
+
+  <!-- Bump the ?v= number when a .js file changes so browsers load the new version -->
+  <script src="firebase-config.js?v=12"></script>
+  <script src="online.js?v=12"></script>
+  <script src="game.js?v=12"></script>
 </body>
 </html>
