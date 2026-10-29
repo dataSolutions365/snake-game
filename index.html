@@ -50,6 +50,21 @@
     .chat-row { display: flex; gap: 6px; }
     .chat-row input { flex: 1; min-width: 0; font: 16px monospace; padding: 8px; border-radius: 4px; border: none; }
     .chat-row button { font: 16px monospace; padding: 8px 12px; border: none; border-radius: 4px; background: #7cfc00; cursor: pointer; }
+    /* ----- Leaderboard ----- */
+    #board {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 10;
+      background: rgba(20, 20, 20, 0.96); padding: 16px; box-sizing: border-box; touch-action: auto;
+    }
+    #board[hidden], #board [hidden] { display: none !important; }
+    #board-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+    #board-tabs button { flex: 1; font: 18px monospace; padding: 8px; border: none; border-radius: 6px; background: #333; color: #fff; cursor: pointer; }
+    #board-tabs button.active { background: #ffff66; color: #111; }
+    #board-list { list-style: none; padding: 0; margin: 0 auto; text-align: left; font-size: 22px; white-space: pre; display: inline-block; min-width: 220px; }
+    #board-list li { padding: 4px 8px; }
+    #board-list li.mine { background: #ffff66; color: #111; border-radius: 4px; }
+    #board-list li.note { white-space: normal; color: #aaa; font-size: 16px; text-align: center; }
+    #initials-input { text-transform: uppercase; text-align: center; font-size: 36px; letter-spacing: 12px; }
+
     #chat-toggle {
       position: fixed; right: 12px; bottom: 12px; z-index: 6; font-size: 26px; width: 52px; height: 52px;
       border-radius: 50%; border: none; background: #333; cursor: pointer;
@@ -60,6 +75,7 @@
   <!-- Firebase, for online play and the leaderboard -->
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 </head>
 <body>
   <!-- Online menus. online.js shows and hides these. -->
@@ -103,9 +119,29 @@
   </div>
   <button id="chat-toggle" hidden>💬</button>
 
+  <!-- Leaderboard. leaderboard.js shows and hides this. -->
+  <div id="board" hidden>
+    <div class="panel">
+      <h2>🏆 LEADERBOARD</h2>
+      <div id="initials-form" hidden>
+        <p>You made the top 10 with <b id="initials-score"></b>!<br>Enter your initials:</p>
+        <input id="initials-input" maxlength="3" autocomplete="off">
+        <div class="error" id="initials-error"></div>
+        <button class="btn" id="initials-save">Save</button>
+        <button class="btn gray" id="initials-skip">Skip</button>
+      </div>
+      <div id="board-list-wrap">
+        <div id="board-tabs"></div>
+        <ol id="board-list"></ol>
+        <button class="btn gray" id="board-close">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Bump the ?v= number when a .js file changes so browsers load the new version -->
-  <script src="firebase-config.js?v=12"></script>
-  <script src="online.js?v=12"></script>
-  <script src="game.js?v=12"></script>
+  <script src="firebase-config.js?v=13"></script>
+  <script src="online.js?v=13"></script>
+  <script src="leaderboard.js?v=13"></script>
+  <script src="game.js?v=13"></script>
 </body>
 </html>

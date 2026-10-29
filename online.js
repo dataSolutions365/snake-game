@@ -85,7 +85,7 @@ function onlineAvailable() {
 
 function connect() {
   if (db) return db;
-  firebase.initializeApp(FIREBASE_CONFIG);
+  if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG); // the leaderboard may have started it already
   db = firebase.database();
   return db;
 }

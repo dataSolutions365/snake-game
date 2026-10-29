@@ -140,6 +140,14 @@ class StartScene extends Phaser.Scene {
 
     this.setupColorPicker(HEIGHT / 2 - 35);
 
+    // Leaderboard button in the top-right corner (once Firebase is set up). Keyboard: L
+    if (Leaderboard.available()) {
+      const showBoard = () => Leaderboard.show('easy');
+      this.add.text(WIDTH - 10, 10, '🏆 Leaderboard', { fontSize: '18px', color: '#ffff66', backgroundColor: '#333333', padding: { x: 8, y: 6 } })
+        .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerdown', showBoard);
+      this.input.keyboard.on('keydown-L', showBoard);
+    }
+
     this.add.text(WIDTH / 2, HEIGHT / 2 + 25, 'Choose a mode:', { fontSize: '20px', color: '#ffffff' }).setOrigin(0.5);
 
     // One button per mode. Keyboard: 1, 2, 3...
@@ -158,16 +166,18 @@ class StartScene extends Phaser.Scene {
       const x = PORTRAIT ? WIDTH / 2 : WIDTH / 2 + (col - (perRow - 1) / 2) * 260;
       const y = PORTRAIT ? HEIGHT / 2 + 75 + i * 100 : HEIGHT / 2 + 80 + row * 105;
       // Tell the game which mode, and which color the player picked.
-      const start = mode.online
-        ? () => this.scene.start('OnlineMenu', { color: this.colorChoice })
-        : () => this.scene.start('Game', { mode: key, color: this.colorChoice });
+      const start = () => {
+        if (Leaderboard.isOpen()) return; // the leaderboard is showing on top
+        if (mode.online) this.scene.start('OnlineMenu', { color: this.colorChoice });
+        else this.scene.start('Game', { mode: key, color: this.colorChoice });
+      };
       makeButton(this, x, y, (TOUCH ? '' : (i + 1) + '. ') + mode.name + '\n' + mode.about,
         buttonColors[i % buttonColors.length], start, PORTRAIT ? 280 : 210, PORTRAIT ? '22px' : '19px');
       if (!mode.online) {
         const under = this.add.text(x, y + 48, 'Best: ' + loadHighScore(key), { fontSize: '16px', color: '#aaaaaa' }).setOrigin(0.5);
         if (mode.players === 2) this.p2Label = under; // filled in by update() below
       }
-      this.input.keyboard.once('keydown-' + keyNames[i], start);
+      this.input.keyboard.on('keydown-' + keyNames[i], start);
     });
   }
 
@@ -787,16 +797,30 @@ class GameOverScene extends Phaser.Scene {
       this.add.text(WIDTH / 2, HEIGHT / 2 + 15, data.scores, { fontSize: '20px', color: '#cccccc' }).setOrigin(0.5);
     }
 
-    const playAgain = () => this.scene.start('Game', { mode: data.mode, color: data.color }); // same mode and color again
-    const changeMode = () => this.scene.start('Start');
+    // (The keys do nothing while the leaderboard is open on top.)
+    const playAgain = () => { if (!Leaderboard.isOpen()) this.scene.start('Game', { mode: data.mode, color: data.color }); };
+    const changeMode = () => { if (!Leaderboard.isOpen()) this.scene.start('Start'); };
+
+    // Leaderboard: if this score made the top 10, ask for initials.
+    const hasBoard = Leaderboard.available() && Leaderboard.modes.includes(data.mode);
+    if (hasBoard) {
+      Leaderboard.makesTheBoard(data.mode, data.score)
+        .then(made => { if (made && this.scene.isActive()) Leaderboard.askInitials(data.mode, data.score); })
+        .catch(() => {}); // no connection: just skip it
+    }
 
     // Short pause first, so a swipe that was still happening doesn't
     // press a button by accident.
     this.time.delayedCall(500, () => {
       makeButton(this, WIDTH / 2, HEIGHT / 2 + 85, TOUCH ? 'Play again' : 'Play again (SPACE)', '#7cfc00', playAgain);
       makeButton(this, WIDTH / 2, HEIGHT / 2 + 150, TOUCH ? 'Change mode' : 'Change mode (M)', '#cccccc', changeMode);
-      this.input.keyboard.once('keydown-SPACE', playAgain);
-      this.input.keyboard.once('keydown-M', changeMode);
+      this.input.keyboard.on('keydown-SPACE', playAgain);
+      this.input.keyboard.on('keydown-M', changeMode);
+      if (hasBoard) {
+        const showBoard = () => Leaderboard.show(data.mode);
+        makeButton(this, WIDTH / 2, HEIGHT / 2 + 215, TOUCH ? 'Leaderboard' : 'Leaderboard (L)', '#ffff66', showBoard);
+        this.input.keyboard.on('keydown-L', showBoard);
+      }
     });
   }
 

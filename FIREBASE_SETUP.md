@@ -19,19 +19,25 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /scores/{id} {
-      // Anyone can see the leaderboard.
-      allow read: if true;
-      // Anyone can add a score, but only 3 capital letters and a sensible number.
-      allow create: if request.resource.data.keys().hasOnly(['name', 'score', 'createdAt'])
+    // A score must be 3 capital letters and a sensible number.
+    function validScore() {
+      return request.resource.data.keys().hasOnly(['name', 'score', 'createdAt'])
         && request.resource.data.name is string
         && request.resource.data.name.matches('^[A-Z]{3}$')
         && request.resource.data.score is int
         && request.resource.data.score >= 1
         && request.resource.data.score <= 500
         && request.resource.data.createdAt == request.time;
-      // Nobody can change or delete scores from the game. (You can in the console.)
-      allow update, delete: if false;
+    }
+    // One leaderboard per mode. Anyone can see them and add a score.
+    // Nobody can change or delete scores from the game (you can in the console).
+    match /scores_easy/{id} {
+      allow read: if true;
+      allow create: if validScore();
+    }
+    match /scores_medium/{id} {
+      allow read: if true;
+      allow create: if validScore();
     }
   }
 }
@@ -74,4 +80,4 @@ Do this step **before** step 4, so the config you copy includes the database add
 The firebaseConfig is safe to share. It's designed to be public, and the rules in step 3 are what protect the database.
 
 ## Removing a bad score later
-Firestore Database → **Data** tab → `scores` → click the entry → the ⋮ menu → **Delete document**.
+Firestore Database → **Data** tab → `scores_easy` or `scores_medium` → click the entry → the ⋮ menu → **Delete document**.
