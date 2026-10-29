@@ -444,11 +444,25 @@ window.addEventListener('DOMContentLoaded', () => {
   el('start-button').onclick = () => startGame();
   el('leave-button').onclick = () => { leaveRoom(); Screens.hideAll(); Online.events.onExit(); };
   el('message-ok-button').onclick = () => { Screens.hideAll(); Online.events.onExit(); };
-  el('copy-link-button').onclick = () => {
+  // Invite button: on phones (and some computers) this opens the share
+  // menu, so you can pick Messages and text the link. Otherwise it copies
+  // the link so you can paste it into a text or email.
+  el('invite-button').onclick = async () => {
     const link = location.origin + location.pathname + '?room=' + session.code;
-    navigator.clipboard.writeText(link).then(() => { el('copy-link-button').textContent = 'Copied!'; },
-      () => { el('copy-link-button').textContent = link; });
-    setTimeout(() => { el('copy-link-button').textContent = 'Copy invite link'; }, 2000);
+    const message = 'Come play Snake with me! Tap to join my room (code ' + session.code + '):';
+    const button = el('invite-button');
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: 'Snake', text: message, url: link });
+        return;
+      } catch (e) {
+        if (e.name === 'AbortError') return; // they closed the share menu
+      }
+    }
+    navigator.clipboard.writeText(message + ' ' + link).then(
+      () => { button.textContent = 'Link copied! Paste it in a text.'; },
+      () => { button.textContent = link; });
+    setTimeout(() => { button.textContent = 'Send invite'; }, 3000);
   };
 
   // Typing a chat message.
