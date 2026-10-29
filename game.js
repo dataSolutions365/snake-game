@@ -26,22 +26,35 @@ const ROWS = PORTRAIT ? Math.min(40, Math.floor(20 * window.innerHeight / window
 const WIDTH = COLS * CELL;
 const HEIGHT = ROWS * CELL;
 
-// Computer-controlled snakes. Set COMPUTER_SNAKES to 0 to play alone.
-const COMPUTER_SNAKES = 2;
+// Game modes. The player picks one on the start screen.
+// To add a new mode (like HARD), copy one of these blocks and change the numbers.
+const MODES = {
+  easy:   { name: 'EASY',   about: 'Just you',         computerSnakes: 0, food: 1 },
+  medium: { name: 'MEDIUM', about: 'Computer snakes',  computerSnakes: 2, food: 3 },
+};
+
 const COMPUTER_COLORS = [0x3fa9f5, 0xffa500, 0xb36bff, 0xff66cc]; // blue, orange, purple, pink
 const RESPAWN_AFTER = 3000;  // milliseconds before a crashed computer snake comes back
-const FOOD_COUNT = 3;        // how many pieces of food are on the board at once
 
 // Touch screens get swipe controls instead of arrow keys.
 const TOUCH = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
-// The best score is saved in the browser so it's still there next visit.
+// The best score for each mode is saved in the browser so it's still there next visit.
 // (try/catch because some private-browsing modes block saving.)
-function loadHighScore() {
-  try { return Number(localStorage.getItem('snakeHighScore')) || 0; } catch (e) { return 0; }
+function loadHighScore(mode) {
+  try { return Number(localStorage.getItem('snakeHighScore_' + mode)) || 0; } catch (e) { return 0; }
 }
-function saveHighScore(score) {
-  try { localStorage.setItem('snakeHighScore', score); } catch (e) { }
+function saveHighScore(mode, score) {
+  try { localStorage.setItem('snakeHighScore_' + mode, score); } catch (e) { }
+}
+
+// A clickable/tappable button: a box with text on it.
+function makeButton(scene, x, y, label, color, onClick) {
+  const button = scene.add.text(x, y, label, {
+    fontSize: '22px', color: '#111111', backgroundColor: color, padding: { x: 18, y: 10 }, align: 'center', fixedWidth: 280,
+  }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+  button.on('pointerdown', onClick);
+  return button;
 }
 
 
@@ -55,22 +68,25 @@ class StartScene extends Phaser.Scene {
   constructor() { super('Start'); } // 'Start' is this screen's name
 
   create() {
-    this.add.text(WIDTH / 2, HEIGHT / 2 - 80, 'SNAKE', { fontSize: '64px', color: '#7cfc00' }).setOrigin(0.5);
+    this.add.text(WIDTH / 2, HEIGHT / 2 - 170, 'SNAKE', { fontSize: '64px', color: '#7cfc00' }).setOrigin(0.5);
 
     const howTo = TOUCH ? 'Swipe to steer' : 'Use the arrow keys to steer';
-    this.add.text(WIDTH / 2, HEIGHT / 2, howTo + '\nEat the red food to grow\nDon\'t hit the walls, yourself,\nor the other snakes!',
+    this.add.text(WIDTH / 2, HEIGHT / 2 - 80, howTo + '\nEat the red food to grow\nDon\'t hit the walls or any snake!',
       { fontSize: '18px', color: '#cccccc', align: 'center', lineSpacing: 8 }).setOrigin(0.5);
 
-    this.add.text(WIDTH / 2, HEIGHT / 2 + 80, 'Best: ' + loadHighScore(), { fontSize: '20px', color: '#ffffff' }).setOrigin(0.5);
+    this.add.text(WIDTH / 2, HEIGHT / 2 - 10, 'Choose a mode:', { fontSize: '20px', color: '#ffffff' }).setOrigin(0.5);
 
-    const prompt = this.add.text(WIDTH / 2, HEIGHT / 2 + 130, TOUCH ? 'Tap to start' : 'Press SPACE or click to start',
-      { fontSize: '22px', color: '#ffff66' }).setOrigin(0.5);
-    // Make the prompt blink so it catches your eye.
-    this.tweens.add({ targets: prompt, alpha: 0.2, duration: 600, yoyo: true, repeat: -1 });
-
-    // Switch to the game screen on a tap, click, or the space bar.
-    this.input.once('pointerdown', () => this.scene.start('Game'));
-    this.input.keyboard.once('keydown-SPACE', () => this.scene.start('Game'));
+    // One button per mode, stacked down the screen. Keyboard: 1, 2, ...
+    Object.keys(MODES).forEach((key, i) => {
+      const mode = MODES[key];
+      const y = HEIGHT / 2 + 45 + i * 110;
+      const start = () => this.scene.start('Game', { mode: key }); // tell the game which mode
+      makeButton(this, WIDTH / 2, y, (TOUCH ? '' : (i + 1) + '. ') + mode.name + '\n' + mode.about,
+        i === 0 ? '#7cfc00' : '#ffa500', start);
+      this.add.text(WIDTH / 2, y + 50, 'Best: ' + loadHighScore(key), { fontSize: '16px', color: '#aaaaaa' }).setOrigin(0.5);
+      const keyNames = ['ONE', 'TWO', 'THREE', 'FOUR'];
+      this.input.keyboard.once('keydown-' + keyNames[i], start);
+    });
   }
 }
 
@@ -83,7 +99,11 @@ class GameScene extends Phaser.Scene {
   constructor() { super('Game'); }
 
   // ----- 3a. Setup: runs once each time a new game starts -----
-  create() {
+  // data is the { mode } sent from the start screen.
+  create(data) {
+    this.modeKey = data.mode;
+    this.mode = MODES[data.mode];
+
     // The snake is a list of grid positions. Item 0 is the head.
     // It starts 3 squares long in the middle of the board, facing right.
     const midX = Math.floor(COLS / 2), midY = Math.floor(ROWS / 2);
@@ -107,10 +127,10 @@ class GameScene extends Phaser.Scene {
     // Food: a list of spots, so there can be more than one piece at a time.
     this.computerSnakes = [];
     this.foods = [];
-    for (let i = 0; i < FOOD_COUNT; i++) this.foods.push(this.freeSpot());
+    for (let i = 0; i < this.mode.food; i++) this.foods.push(this.freeSpot());
 
     // Computer snakes (see section 3h).
-    for (let i = 0; i < COMPUTER_SNAKES; i++) this.spawnComputerSnake(COMPUTER_COLORS[i % COMPUTER_COLORS.length]);
+    for (let i = 0; i < this.mode.computerSnakes; i++) this.spawnComputerSnake(COMPUTER_COLORS[i % COMPUTER_COLORS.length]);
 
     // Run moveSnake() over and over on a timer, instead of every frame,
     // so the snake moves one square at a time.
@@ -261,14 +281,14 @@ class GameScene extends Phaser.Scene {
     this.timer.remove(); // stop the snake moving
     this.cameras.main.shake(200, 0.01);
 
-    const best = loadHighScore();
+    const best = loadHighScore(this.modeKey);
     const newBest = this.score > best;
-    if (newBest) saveHighScore(this.score);
+    if (newBest) saveHighScore(this.modeKey, this.score);
 
     // Wait a moment so you can see where you crashed, then show the
     // game over screen. The { } part passes the score along to it.
     this.time.delayedCall(700, () => {
-      this.scene.start('GameOver', { score: this.score, best: Math.max(best, this.score), newBest });
+      this.scene.start('GameOver', { mode: this.modeKey, score: this.score, best: Math.max(best, this.score), newBest });
     });
   }
 }
@@ -364,22 +384,24 @@ GameScene.prototype.distanceToFood = function (spot) {
 class GameOverScene extends Phaser.Scene {
   constructor() { super('GameOver'); }
 
-  // data is the { score, best, newBest } sent from the game screen.
+  // data is the { mode, score, best, newBest } sent from the game screen.
   create(data) {
-    this.add.text(WIDTH / 2, HEIGHT / 2 - 90, 'GAME OVER', { fontSize: '52px', color: '#ff4444' }).setOrigin(0.5);
-    this.add.text(WIDTH / 2, HEIGHT / 2 - 20, 'Score: ' + data.score, { fontSize: '28px', color: '#ffffff' }).setOrigin(0.5);
-    this.add.text(WIDTH / 2, HEIGHT / 2 + 20, data.newBest ? 'New best score!' : 'Best: ' + data.best,
+    this.add.text(WIDTH / 2, HEIGHT / 2 - 120, 'GAME OVER', { fontSize: '52px', color: '#ff4444' }).setOrigin(0.5);
+    this.add.text(WIDTH / 2, HEIGHT / 2 - 65, MODES[data.mode].name + ' mode', { fontSize: '18px', color: '#aaaaaa' }).setOrigin(0.5);
+    this.add.text(WIDTH / 2, HEIGHT / 2 - 25, 'Score: ' + data.score, { fontSize: '28px', color: '#ffffff' }).setOrigin(0.5);
+    this.add.text(WIDTH / 2, HEIGHT / 2 + 15, data.newBest ? 'New best score!' : 'Best: ' + data.best,
       { fontSize: '20px', color: data.newBest ? '#ffff66' : '#cccccc' }).setOrigin(0.5);
 
-    const prompt = this.add.text(WIDTH / 2, HEIGHT / 2 + 90, TOUCH ? 'Tap to play again' : 'Press SPACE or click to play again',
-      { fontSize: '22px', color: '#ffff66' }).setOrigin(0.5);
-    this.tweens.add({ targets: prompt, alpha: 0.2, duration: 600, yoyo: true, repeat: -1 });
+    const playAgain = () => this.scene.start('Game', { mode: data.mode }); // same mode again
+    const changeMode = () => this.scene.start('Start');
 
     // Short pause first, so a swipe that was still happening doesn't
-    // restart the game by accident.
+    // press a button by accident.
     this.time.delayedCall(500, () => {
-      this.input.once('pointerdown', () => this.scene.start('Game'));
-      this.input.keyboard.once('keydown-SPACE', () => this.scene.start('Game'));
+      makeButton(this, WIDTH / 2, HEIGHT / 2 + 85, TOUCH ? 'Play again' : 'Play again (SPACE)', '#7cfc00', playAgain);
+      makeButton(this, WIDTH / 2, HEIGHT / 2 + 150, TOUCH ? 'Change mode' : 'Change mode (M)', '#cccccc', changeMode);
+      this.input.keyboard.once('keydown-SPACE', playAgain);
+      this.input.keyboard.once('keydown-M', changeMode);
     });
   }
 }
