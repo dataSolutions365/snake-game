@@ -49,7 +49,7 @@ const CRASH_COSTS = 5;            // points you lose for crashing online
 const MODES = {
   easy:      { name: 'EASY',      about: 'Just you',        players: 1, computerSnakes: 0, food: 4,  powerUps: true, screens: 2, mazes: true },
   medium:    { name: 'MEDIUM',    about: 'Computer snakes', players: 1, computerSnakes: 5, food: 8,  powerUps: true, screens: 2, mazes: true },
-  twoplayer: { name: '2 PLAYERS', about: 'WASD vs arrows',  players: 2, computerSnakes: 0, food: 2,  powerUps: true, screens: 1 },
+  twoplayer: { name: '2 PLAYERS', about: 'Same computer',   players: 2, computerSnakes: 0, food: 2,  powerUps: true, screens: 1 },
   online:    { name: 'ONLINE',    about: 'Private room',    online: true, computerSnakes: 0, food: 10, powerUps: true, screens: 2, mazes: true },
 };
 
@@ -113,7 +113,11 @@ const RESPAWN_AFTER = 3000;  // milliseconds before a crashed computer snake com
 const COMPUTER_MISSES_YOU = 0.25; // chance (0 to 1) a computer snake doesn't notice your body on a step
 
 // Touch screens get swipe controls instead of arrow keys.
-const TOUCH = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+// (A phone or tablet's main pointer is a finger, which the browser calls
+// "coarse". A laptop with a touch screen still counts as a computer.)
+const TOUCH = window.matchMedia
+  ? window.matchMedia('(pointer: coarse)').matches && !window.matchMedia('(any-pointer: fine)').matches
+  : 'ontouchstart' in window;
 
 // The best score for each mode is saved in the browser so it's still there next visit.
 // (try/catch because some private-browsing modes block saving.)
@@ -140,6 +144,18 @@ function loadControls() {
     const saved = localStorage.getItem('snakeControls');
     return CONTROLS.includes(saved) ? saved : 'keys';
   } catch (e) { return 'keys'; }
+}
+// With 2 players on one computer, each picks their own (and they can't
+// both pick the same). Player 1 starts on W A S D, player 2 on the arrows.
+function loadTwoPlayerControls() {
+  try {
+    const saved = (localStorage.getItem('snakeControls2') || '').split(',');
+    if (CONTROLS.includes(saved[0]) && CONTROLS.includes(saved[1]) && saved[0] !== saved[1]) return saved;
+  } catch (e) { }
+  return ['wasd', 'keys'];
+}
+function saveTwoPlayerControls(choices) {
+  try { localStorage.setItem('snakeControls2', choices.join(',')); } catch (e) { }
 }
 function saveControls(choice) {
   try { localStorage.setItem('snakeControls', choice); } catch (e) { }
@@ -195,7 +211,7 @@ class StartScene extends Phaser.Scene {
     // On a phone: "Swipe to steer". On a computer, that line is the
     // arrow keys / mouse picker instead (see setupControlsPicker).
     const howTo = TOUCH ? 'Swipe to steer\n' : '';
-    this.add.text(WIDTH / 2, HEIGHT / 2 - (TOUCH ? 135 : 120), howTo + 'Eat the red food to grow\nDon\'t hit the walls or any snake!',
+    this.add.text(WIDTH / 2, HEIGHT / 2 - (TOUCH ? 135 : 120), howTo + 'Eat the apples to grow\nDon\'t hit the walls or any snake!',
       { fontSize: '18px', color: '#cccccc', align: 'center', lineSpacing: 8 }).setOrigin(0.5);
 
     this.setupColorPicker(HEIGHT / 2 - 35);
@@ -230,7 +246,9 @@ class StartScene extends Phaser.Scene {
       // Tell the game which mode, and which color the player picked.
       const start = () => {
         if (Leaderboard.isOpen() || this.legend.visible) return; // something is showing on top
+        if (this.twoPlayerSetup && this.twoPlayerSetup.visible) return;
         if (mode.online) this.scene.start('OnlineMenu', { color: this.colorChoice });
+        else if (mode.players === 2) this.showTwoPlayerSetup(key); // pick controls first
         else this.scene.start('Game', { mode: key, color: this.colorChoice });
       };
       makeButton(this, x, y, (TOUCH ? '' : (i + 1) + '. ') + mode.name + '\n' + mode.about,
@@ -257,8 +275,8 @@ class StartScene extends Phaser.Scene {
       '⌨️  Pick Arrows, W A S D or Mouse',
       '    on the start screen (C switches)',
       '🖱️  Mouse: your snake follows it',
-      '👥  2 players: P1 uses W A S D,',
-      '    P2 uses the arrow keys',
+      '👥  2 players: each picks Arrows,',
+      '    W A S D or Mouse before playing',
       '📱  Phone: swipe the way to go',
       '🍎  Eat food to grow',
       '💥  Don\'t hit walls or snakes',
@@ -321,6 +339,54 @@ class StartScene extends Phaser.Scene {
     const pick = choice => { saveControls(choice); show(); };
     this.input.keyboard.on('keydown-C', () => pick(CONTROLS[(CONTROLS.indexOf(loadControls()) + 1) % CONTROLS.length]));
     show();
+  }
+
+  // 2 players: before the game starts, each player picks how they steer.
+  // Picking something the other player has swaps them.
+  showTwoPlayerSetup(modeKey) {
+    if (this.twoPlayerSetup) this.twoPlayerSetup.destroy();
+    const box = this.add.container(0, 0).setDepth(10);
+    this.twoPlayerSetup = box;
+    box.add(this.add.rectangle(0, 0, WIDTH, HEIGHT, 0x000000, 0.92).setOrigin(0).setInteractive());
+    box.add(this.add.text(WIDTH / 2, HEIGHT / 2 - 170, '2 PLAYERS', { fontSize: '40px', color: '#3fa9f5' }).setOrigin(0.5));
+    box.add(this.add.text(WIDTH / 2, HEIGHT / 2 - 125, 'How does each player want to steer?', { fontSize: '18px', color: '#cccccc' }).setOrigin(0.5));
+
+    const choices = loadTwoPlayerControls();
+    const labels = { keys: '⬆️ Arrows', wasd: '🔤 W A S D', mouse: '🖱️ Mouse' };
+    const colors = [PLAYER_COLORS[this.colorChoice], secondColor(this.colorChoice)];
+    const rows = [0, 1].map(player => {
+      const y = HEIGHT / 2 - 60 + player * 70;
+      const hex = '#' + colors[player].head.toString(16).padStart(6, '0');
+      const parts = [this.add.text(0, y, 'Player ' + (player + 1) + ':', { fontSize: '20px', color: hex }).setOrigin(0, 0.5)];
+      const buttons = {};
+      CONTROLS.forEach(choice => {
+        buttons[choice] = this.add.text(0, y, labels[choice], { fontSize: '18px', padding: { x: 10, y: 5 } })
+          .setOrigin(0, 0.5).setInteractive({ useHandCursor: true }).on('pointerdown', () => pick(player, choice));
+        parts.push(buttons[choice]);
+      });
+      let x = WIDTH / 2 - (parts.reduce((total, part) => total + part.width, 0) + 12 * (parts.length - 1)) / 2;
+      parts.forEach(part => { part.x = x; x += part.width + 12; box.add(part); });
+      return buttons;
+    });
+    const show = () => rows.forEach((buttons, player) => CONTROLS.forEach(choice => {
+      const picked = choices[player] === choice;
+      buttons[choice].setColor(picked ? '#111111' : '#cccccc').setBackgroundColor(picked ? '#3fa9f5' : '#333333');
+    }));
+    const pick = (player, choice) => {
+      const other = 1 - player;
+      if (choices[other] === choice) choices[other] = choices[player]; // swap
+      choices[player] = choice;
+      saveTwoPlayerControls(choices);
+      show();
+    };
+    show();
+
+    const start = () => this.scene.start('Game', { mode: modeKey, color: this.colorChoice });
+    const back = () => { box.destroy(); this.twoPlayerSetup = null; };
+    box.add(makeButton(this, WIDTH / 2, HEIGHT / 2 + 100, 'Start (SPACE)', '#7cfc00', start));
+    box.add(makeButton(this, WIDTH / 2, HEIGHT / 2 + 165, 'Back (ESC)', '#cccccc', back));
+    this.input.keyboard.once('keydown-SPACE', () => { if (this.twoPlayerSetup) start(); });
+    this.input.keyboard.once('keydown-ESC', () => { if (this.twoPlayerSetup) back(); });
   }
 
   // A row of colored squares. Click or tap one to pick it (on a computer,
@@ -493,18 +559,24 @@ class GameScene extends Phaser.Scene {
       else this.turn(this.me, 0, dy > 0 ? 1 : -1);
     });
 
-    // Mouse: if the player picked the mouse on the start screen, the snake
-    // heads toward the pointer (see steerToMouse). Pressing an arrow key
-    // steers with the keys until the mouse moves again.
-    this.controls = TOUCH ? 'swipe' : loadControls(); // picked on the start screen
-    this.mouseSteering = this.controls === 'mouse';
-    if (this.mouseSteering) this.input.on('pointermove', () => { this.mouseSteering = true; });
+    // Who steers how, as picked on the start screen: a list of
+    // { player, how } where how is 'keys' (arrows), 'wasd' or 'mouse'.
+    // With 2 players on one computer, each has their own pick.
+    if (TOUCH) this.steering = [];
+    else if (this.players.length === 2 && !this.online) {
+      const picks = loadTwoPlayerControls();
+      this.steering = [{ player: this.players[0], how: picks[0] }, { player: this.players[1], how: picks[1] }];
+    } else this.steering = [{ player: this.me, how: loadControls() }];
+
+    // On your own with the mouse picked, the arrow keys still work too:
+    // pressing one steers with the keys until the mouse moves again.
+    this.mouseSteering = true;
+    this.input.on('pointermove', () => { this.mouseSteering = true; });
   }
 
   // Turn toward the mouse pointer: go whichever way it's furthest away
   // (across or up/down). If that's straight back, go the other way round.
-  steerToMouse() {
-    const me = this.me;
+  steerToMouse(me) {
     if (!this.mouseSteering || !me || me.crashed || !me.body.length) return;
     const pointer = this.input.activePointer;
     const spot = this.cameras.main.getWorldPoint(pointer.x, pointer.y); // where the pointer is on the board
@@ -523,24 +595,25 @@ class GameScene extends Phaser.Scene {
   update() {
     this.spinScreen(); // see 3j
 
-    // Which keys steer whom:
-    //  - 2 players on one keyboard: player 1 uses W A S D, player 2 the arrow keys
-    //  - otherwise, what was picked on the start screen. With the mouse
-    //    picked, the arrow keys still work until the mouse moves again.
-    const twoOnOne = this.players.length === 2 && !this.online;
-    const arrowsPlayer = twoOnOne ? this.players[1] : this.controls === 'wasd' ? null : this.me;
-    const wasdPlayer = twoOnOne ? this.players[0] : this.controls === 'wasd' ? this.me : null;
-    const steer = (player, left, right, up, down) => {
-      if (!player) return;
-      if (left.isDown || right.isDown || up.isDown || down.isDown) this.mouseSteering = false;
+    // Each player steers the way they picked (see the end of setupControls).
+    const arrows = [this.cursors.left, this.cursors.right, this.cursors.up, this.cursors.down];
+    const wasd = [this.wasd.A, this.wasd.D, this.wasd.W, this.wasd.S];
+    const steer = (player, [left, right, up, down]) => {
       if (left.isDown) this.turn(player, -1, 0);
       if (right.isDown) this.turn(player, 1, 0);
       if (up.isDown) this.turn(player, 0, -1);
       if (down.isDown) this.turn(player, 0, 1);
+      return left.isDown || right.isDown || up.isDown || down.isDown;
     };
-    steer(arrowsPlayer, this.cursors.left, this.cursors.right, this.cursors.up, this.cursors.down);
-    steer(wasdPlayer, this.wasd.A, this.wasd.D, this.wasd.W, this.wasd.S);
-    this.steerToMouse();
+    this.steering.forEach(({ player, how }) => {
+      if (how === 'keys') steer(player, arrows);
+      if (how === 'wasd') steer(player, wasd);
+      if (how === 'mouse') {
+        // On your own, the arrow keys work too, until the mouse moves again.
+        if (this.steering.length === 1 && steer(player, arrows)) this.mouseSteering = false;
+        this.steerToMouse(player);
+      }
+    });
   }
 
   // Used by the keys and swipes.
@@ -790,23 +863,22 @@ class GameScene extends Phaser.Scene {
     Object.values(this.powerUpIcons).forEach(icon => icon.destroy()); // ones that are gone
     this.powerUpIcons = icons;
 
-    // Food: red squares.
-    this.graphics.fillStyle(0xff4444);
-    this.foods.forEach(food => this.graphics.fillRect(food.x * CELL, food.y * CELL, CELL - 1, CELL - 1));
+    // Food: red apples with a green leaf.
+    this.foods.forEach(food => {
+      g.fillStyle(0xff4444);
+      g.fillCircle(food.x * CELL + CELL / 2, food.y * CELL + CELL / 2 + 1, CELL * 0.42);
+      g.fillStyle(0x32cd32);
+      g.fillEllipse(food.x * CELL + CELL * 0.65, food.y * CELL + CELL * 0.15, CELL * 0.35, CELL * 0.2);
+    });
 
-    // Leftovers from crashed snakes: smaller squares in that snake's color.
+    // Leftovers from crashed snakes: small dots in that snake's color.
     this.leftovers.forEach(piece => {
-      this.graphics.fillStyle(piece.color);
-      this.graphics.fillRect(piece.x * CELL + 4, piece.y * CELL + 4, CELL - 9, CELL - 9);
+      g.fillStyle(piece.color);
+      g.fillCircle(piece.x * CELL + CELL / 2, piece.y * CELL + CELL / 2, CELL * 0.3);
     });
 
-    // Computer snakes: each in its own color, with a white dot on the head.
-    this.computerSnakes.filter(cs => cs.alive).forEach(cs => {
-      this.graphics.fillStyle(cs.color);
-      cs.body.forEach(part => this.graphics.fillRect(part.x * CELL, part.y * CELL, CELL - 1, CELL - 1));
-      this.graphics.fillStyle(0xffffff);
-      this.graphics.fillRect(cs.body[0].x * CELL + 6, cs.body[0].y * CELL + 6, CELL - 13, CELL - 13);
-    });
+    // Computer snakes: each in its own color, with a white head.
+    this.computerSnakes.filter(cs => cs.alive).forEach(cs => this.drawSnake(cs.body, cs.direction, cs.color, 0xffffff));
 
     // Players' snakes, in their colors. The head is a lighter shade.
     // While a power-up is working: sped up, the head flashes white;
@@ -818,23 +890,66 @@ class GameScene extends Phaser.Scene {
       if (flash && this.has(p, 'speed')) head = 0xffffff;
       if (flash && (this.has(p, 'slow') || this.has(p, 'flip'))) head = 0xff4444;
       const alpha = this.has(p, 'ghost') ? 0.4 : 1;
-      p.body.forEach((part, i) => {
-        this.graphics.fillStyle(i === 0 ? head : p.color.body, alpha);
-        // -1 leaves a thin gap so you can see each square.
-        this.graphics.fillRect(part.x * CELL, part.y * CELL, CELL - 1, CELL - 1);
-      });
-      // A dinosaur has a second row of squares down one side.
-      this.fatCells(p).forEach((part, i) => {
-        if (this.hitsWall(part)) return;
-        this.graphics.fillStyle(i === 0 ? head : p.color.body, alpha);
-        this.graphics.fillRect(part.x * CELL, part.y * CELL, CELL - 1, CELL - 1);
-      });
+      // A dinosaur has a second body down one side (drawn first, so it's underneath).
+      const side = this.fatCells(p).filter(part => !this.hitsWall(part));
+      if (side.length) this.drawSnake(side, p.direction, p.color.body, p.color.body, alpha, false);
+      this.drawSnake(p.body, p.direction, p.color.body, head, alpha);
     });
 
     if (this.online) this.updateOutText(); // see 3i
     this.drawLightsOut(); // see 3j
     this.followMe();
     this.drawMiniMap();
+  }
+
+  // Draw one snake, cartoon style: a round body with spots that gets thinner
+  // toward the tail, and a head with eyes and a tongue that flicks out now and then.
+  // face: false leaves off the eyes and tongue (for a dinosaur's extra side).
+  drawSnake(body, direction, bodyColor, headColor, alpha = 1, face = true) {
+    const g = this.graphics, n = body.length;
+    if (!n) return;
+    const center = part => ({ x: part.x * CELL + CELL / 2, y: part.y * CELL + CELL / 2 });
+    const size = i => CELL * 0.8 * Math.min(1, (n - i) / 4 + 0.25); // the last 2 squares get thinner
+    const spots = Phaser.Display.Color.IntegerToColor(bodyColor).darken(25).color;
+
+    // Body, from the tail up: a circle on each square, joined by a thick line.
+    for (let i = n - 1; i >= 1; i--) {
+      const a = center(body[i]), b = center(body[i - 1]);
+      g.lineStyle(Math.min(size(i), size(i - 1)), bodyColor, alpha);
+      g.lineBetween(a.x, a.y, b.x, b.y);
+      g.fillStyle(bodyColor, alpha);
+      g.fillCircle(a.x, a.y, size(i) / 2);
+      if (i % 2 === 0) {
+        g.fillStyle(spots, alpha);
+        g.fillCircle(a.x, a.y, CELL * 0.12);
+      }
+    }
+
+    // Head: a bigger circle.
+    const h = center(body[0]);
+    g.fillStyle(headColor, alpha);
+    g.fillCircle(h.x, h.y, CELL * 0.5);
+    if (!face) return;
+
+    // Eyes: two white circles with black pupils, looking the way it's going.
+    const fx = direction.x, fy = direction.y;   // forward
+    const sx = -fy, sy = fx;                     // sideways
+    [-1, 1].forEach(s => {
+      const ex = h.x + fx * CELL * 0.12 + sx * s * CELL * 0.22, ey = h.y + fy * CELL * 0.12 + sy * s * CELL * 0.22;
+      g.fillStyle(0xffffff, alpha);
+      g.fillCircle(ex, ey, CELL * 0.16);
+      g.fillStyle(0x000000, alpha);
+      g.fillCircle(ex + fx * CELL * 0.06, ey + fy * CELL * 0.06, CELL * 0.08);
+    });
+
+    // Tongue: a red forked line, out for a moment every couple of seconds.
+    if (Math.floor(this.clock / 300) % 6 === 0) {
+      const tx = h.x + fx * CELL * 0.85, ty = h.y + fy * CELL * 0.85;
+      g.lineStyle(2, 0xff3355, alpha);
+      g.lineBetween(h.x + fx * CELL * 0.45, h.y + fy * CELL * 0.45, tx, ty);
+      g.lineBetween(tx, ty, tx + (fx + sx) * CELL * 0.15, ty + (fy + sy) * CELL * 0.15);
+      g.lineBetween(tx, ty, tx + (fx - sx) * CELL * 0.15, ty + (fy - sy) * CELL * 0.15);
+    }
   }
 
   // ----- 3g. Game over -----
