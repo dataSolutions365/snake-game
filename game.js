@@ -32,6 +32,13 @@ class MainScene extends Phaser.Scene {
     // A hint at the top of the screen.
     this.add.text(COLS * CELL / 2, 10, 'Use the arrow keys to steer', { fontSize: '18px', color: '#aaaaaa' }).setOrigin(0.5, 0);
 
+    // Score, shown in the top-left corner.
+    this.score = 0;
+    this.scoreText = this.add.text(10, 10, 'Score: 0', { fontSize: '20px', color: '#ffffff' });
+
+    // Put the first piece of food somewhere on the board.
+    this.placeFood();
+
     this.draw();
   }
 
@@ -62,13 +69,38 @@ class MainScene extends Phaser.Scene {
 
     // Moving = add a new head at the front, remove the last tail square.
     this.snake.unshift(newHead);
-    this.snake.pop();
+
+    if (newHead.x === this.food.x && newHead.y === this.food.y) {
+      // Ate the food! Skipping pop() leaves the tail where it was,
+      // so the snake ends up one square longer.
+      this.score += 1;
+      this.scoreText.setText('Score: ' + this.score);
+      this.placeFood();
+    } else {
+      this.snake.pop();
+    }
 
     this.draw();
   }
 
+  placeFood() {
+    // Pick random squares until we find one the snake isn't on.
+    let spot;
+    do {
+      spot = {
+        x: Phaser.Math.Between(0, COLS - 1),
+        y: Phaser.Math.Between(0, ROWS - 1),
+      };
+    } while (this.snake.some(part => part.x === spot.x && part.y === spot.y));
+    this.food = spot;
+  }
+
   draw() {
     this.graphics.clear();
+
+    // Food: a red square.
+    this.graphics.fillStyle(0xff4444);
+    this.graphics.fillRect(this.food.x * CELL, this.food.y * CELL, CELL - 1, CELL - 1);
 
     // Snake: the head is a brighter green than the body.
     this.snake.forEach((part, i) => {
