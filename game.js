@@ -5,7 +5,7 @@
 //
 //    1. SETTINGS        numbers you can tweak (speed, board size)
 //    2. START SCREEN    the title screen you see first
-//    3. THE GAME        the snake, food, controls and score
+//    3. THE GAME        the snake, food, controls, score and computer snakes
 //    4. GAME OVER       the screen after you crash
 //    5. START PHASER    joins the screens together and starts it all
 // =====================================================================
@@ -25,6 +25,12 @@ const COLS = PORTRAIT ? 20 : 40;  // squares across
 const ROWS = PORTRAIT ? Math.min(40, Math.floor(20 * window.innerHeight / window.innerWidth)) : 30; // squares down
 const WIDTH = COLS * CELL;
 const HEIGHT = ROWS * CELL;
+
+// Computer-controlled snakes. Set COMPUTER_SNAKES to 0 to play alone.
+const COMPUTER_SNAKES = 2;
+const COMPUTER_COLORS = [0x3fa9f5, 0xffa500, 0xb36bff, 0xff66cc]; // blue, orange, purple, pink
+const RESPAWN_AFTER = 3000;  // milliseconds before a crashed computer snake comes back
+const FOOD_COUNT = 3;        // how many pieces of food are on the board at once
 
 // Touch screens get swipe controls instead of arrow keys.
 const TOUCH = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
@@ -52,7 +58,7 @@ class StartScene extends Phaser.Scene {
     this.add.text(WIDTH / 2, HEIGHT / 2 - 80, 'SNAKE', { fontSize: '64px', color: '#7cfc00' }).setOrigin(0.5);
 
     const howTo = TOUCH ? 'Swipe to steer' : 'Use the arrow keys to steer';
-    this.add.text(WIDTH / 2, HEIGHT / 2, howTo + '\nEat the red food to grow\nDon\'t hit the walls or yourself!',
+    this.add.text(WIDTH / 2, HEIGHT / 2, howTo + '\nEat the red food to grow\nDon\'t hit the walls, yourself,\nor the other snakes!',
       { fontSize: '18px', color: '#cccccc', align: 'center', lineSpacing: 8 }).setOrigin(0.5);
 
     this.add.text(WIDTH / 2, HEIGHT / 2 + 80, 'Best: ' + loadHighScore(), { fontSize: '20px', color: '#ffffff' }).setOrigin(0.5);
@@ -97,7 +103,14 @@ class GameScene extends Phaser.Scene {
     this.scoreText = this.add.text(10, 10, 'Score: 0', { fontSize: '20px', color: '#ffffff' });
 
     this.setupControls();
-    this.placeFood();
+
+    // Food: a list of spots, so there can be more than one piece at a time.
+    this.computerSnakes = [];
+    this.foods = [];
+    for (let i = 0; i < FOOD_COUNT; i++) this.foods.push(this.freeSpot());
+
+    // Computer snakes (see section 3h).
+    for (let i = 0; i < COMPUTER_SNAKES; i++) this.spawnComputerSnake(COMPUTER_COLORS[i % COMPUTER_COLORS.length]);
 
     // Run moveSnake() over and over on a timer, instead of every frame,
     // so the snake moves one square at a time.
@@ -151,8 +164,8 @@ class GameScene extends Phaser.Scene {
       y: head.y + this.direction.y,
     };
 
-    // Crashed into a wall or into itself? Then the game is over.
-    if (this.hitsWall(newHead) || this.hitsSelf(newHead)) {
+    // Crashed into a wall, itself, or a computer snake? Then the game is over.
+    if (this.hitsWall(newHead) || this.hitsSelf(newHead) || this.hitsComputerSnake(newHead)) {
       this.gameOver();
       return;
     }
@@ -160,15 +173,17 @@ class GameScene extends Phaser.Scene {
     // Moving = add a new head at the front, remove the last tail square.
     this.snake.unshift(newHead);
 
-    if (newHead.x === this.food.x && newHead.y === this.food.y) {
+    if (this.eatFoodAt(newHead)) {
       // Ate the food! Skipping pop() leaves the tail where it was,
       // so the snake ends up one square longer.
       this.score += 1;
       this.scoreText.setText('Score: ' + this.score);
-      this.placeFood();
     } else {
       this.snake.pop();
     }
+
+    // Now the computer snakes take their step.
+    this.moveComputerSnakes();
 
     this.draw();
   }
@@ -183,26 +198,55 @@ class GameScene extends Phaser.Scene {
     return this.snake.slice(0, -1).some(part => part.x === spot.x && part.y === spot.y);
   }
 
+  hitsComputerSnake(spot) {
+    return this.computerSnakes.some(cs => cs.alive && cs.body.some(part => part.x === spot.x && part.y === spot.y));
+  }
+
+  // Is anything (any snake, or food) on this square?
+  isTaken(spot) {
+    const allBodies = [this.snake, ...this.computerSnakes.filter(cs => cs.alive).map(cs => cs.body)];
+    return allBodies.some(body => body.some(part => part.x === spot.x && part.y === spot.y))
+      || (this.foods || []).some(food => food.x === spot.x && food.y === spot.y);
+  }
+
   // ----- 3e. Food -----
-  placeFood() {
-    // Pick random squares until we find one the snake isn't on.
+  freeSpot() {
+    // Pick random squares until we find an empty one.
     let spot;
     do {
       spot = {
         x: Phaser.Math.Between(0, COLS - 1),
         y: Phaser.Math.Between(0, ROWS - 1),
       };
-    } while (this.snake.some(part => part.x === spot.x && part.y === spot.y));
-    this.food = spot;
+    } while (this.isTaken(spot));
+    return spot;
+  }
+
+  // If there's food on this spot, eat it, put a new piece somewhere else,
+  // and return true. Otherwise return false.
+  eatFoodAt(spot) {
+    const i = this.foods.findIndex(food => food.x === spot.x && food.y === spot.y);
+    if (i === -1) return false;
+    this.foods.splice(i, 1);
+    this.foods.push(this.freeSpot());
+    return true;
   }
 
   // ----- 3f. Drawing -----
   draw() {
     this.graphics.clear();
 
-    // Food: a red square.
+    // Food: red squares.
     this.graphics.fillStyle(0xff4444);
-    this.graphics.fillRect(this.food.x * CELL, this.food.y * CELL, CELL - 1, CELL - 1);
+    this.foods.forEach(food => this.graphics.fillRect(food.x * CELL, food.y * CELL, CELL - 1, CELL - 1));
+
+    // Computer snakes: each in its own color, with a white dot on the head.
+    this.computerSnakes.filter(cs => cs.alive).forEach(cs => {
+      this.graphics.fillStyle(cs.color);
+      cs.body.forEach(part => this.graphics.fillRect(part.x * CELL, part.y * CELL, CELL - 1, CELL - 1));
+      this.graphics.fillStyle(0xffffff);
+      this.graphics.fillRect(cs.body[0].x * CELL + 6, cs.body[0].y * CELL + 6, CELL - 13, CELL - 13);
+    });
 
     // Snake: the head is a brighter green than the body.
     this.snake.forEach((part, i) => {
@@ -228,6 +272,89 @@ class GameScene extends Phaser.Scene {
     });
   }
 }
+
+
+// =====================================================================
+//  3h. COMPUTER SNAKES
+//  These are added onto the GameScene class above (that's what
+//  "GameScene.prototype" means), so they can use this.snake, this.foods, etc.
+//  Keeping them here makes the "brain" easy to find.
+// =====================================================================
+
+// Put a new computer snake on the board, 3 squares long, away from the player.
+GameScene.prototype.spawnComputerSnake = function (color) {
+  for (let tries = 0; tries < 200; tries++) {
+    const head = this.freeSpot();
+    const tail1 = { x: head.x - 1, y: head.y };
+    const tail2 = { x: head.x - 2, y: head.y };
+    const farFromPlayer = Math.abs(head.x - this.snake[0].x) + Math.abs(head.y - this.snake[0].y) > 8;
+    if (farFromPlayer && !this.hitsWall(tail2) && !this.isTaken(tail1) && !this.isTaken(tail2)) {
+      this.computerSnakes.push({ body: [head, tail1, tail2], direction: { x: 1, y: 0 }, color, alive: true });
+      return;
+    }
+  }
+  // Board too crowded to fit one in. Try again later.
+  this.time.delayedCall(RESPAWN_AFTER, () => this.spawnComputerSnake(color));
+};
+
+GameScene.prototype.moveComputerSnakes = function () {
+  this.computerSnakes.filter(cs => cs.alive).forEach(cs => {
+    const head = cs.body[0];
+
+    // THE BRAIN, in three simple rules:
+    // 1. Look at the 3 ways it could go (it can't turn straight back).
+    const options = [
+      cs.direction,                                  // straight on
+      { x: -cs.direction.y, y: cs.direction.x },     // turn one way
+      { x: cs.direction.y, y: -cs.direction.x },     // turn the other way
+    ];
+
+    // 2. Throw out any move that hits a wall or a snake.
+    const safe = options.filter(dir => {
+      const spot = { x: head.x + dir.x, y: head.y + dir.y };
+      return !this.hitsWall(spot) && !this.isSnakeOn(spot);
+    });
+
+    // Nowhere safe to go? It's boxed in and crashes.
+    if (safe.length === 0) {
+      cs.alive = false;
+      this.time.delayedCall(RESPAWN_AFTER, () => {
+        this.computerSnakes.splice(this.computerSnakes.indexOf(cs), 1);
+        this.spawnComputerSnake(cs.color);
+      });
+      return;
+    }
+
+    // 3. Of the safe moves, pick the one that gets closest to the nearest food.
+    //    Now and then (10% of the time) it picks a random safe move instead,
+    //    so it's not perfect and you can beat it.
+    let choice;
+    if (Math.random() < 0.1) {
+      choice = Phaser.Utils.Array.GetRandom(safe);
+    } else {
+      choice = safe.reduce((best, dir) =>
+        this.distanceToFood({ x: head.x + dir.x, y: head.y + dir.y }) <
+        this.distanceToFood({ x: head.x + best.x, y: head.y + best.y }) ? dir : best);
+    }
+
+    // Move it the same way as the player's snake: new head, drop the tail
+    // unless it just ate.
+    cs.direction = choice;
+    const newHead = { x: head.x + choice.x, y: head.y + choice.y };
+    cs.body.unshift(newHead);
+    if (!this.eatFoodAt(newHead)) cs.body.pop();
+  });
+};
+
+// Is any snake (the player or a computer snake) on this square?
+GameScene.prototype.isSnakeOn = function (spot) {
+  return this.snake.some(part => part.x === spot.x && part.y === spot.y) || this.hitsComputerSnake(spot);
+};
+
+// How many squares away is the closest piece of food?
+GameScene.prototype.distanceToFood = function (spot) {
+  return Math.min(...this.foods.map(food => Math.abs(food.x - spot.x) + Math.abs(food.y - spot.y)));
+};
 
 
 // =====================================================================

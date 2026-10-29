@@ -1,0 +1,51 @@
+# Firebase setup for the leaderboard (about 10 minutes)
+
+## 1. Create the project
+1. Go to https://console.firebase.google.com and sign in with a Google account.
+2. Click **Create a project** (or **Add project**). Name it `snake-game`.
+3. When it asks about Google Analytics, turn it **off**. Click **Create project**.
+
+## 2. Create the database
+1. In the left menu, open **Build → Firestore Database**.
+2. Click **Create database**.
+3. Location: keep the default. Click **Next**.
+4. Choose **Start in production mode**. Click **Create**.
+
+## 3. Set the rules (who can read and write scores)
+1. Still in Firestore, open the **Rules** tab.
+2. Delete everything in the box and paste this in:
+
+```
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /scores/{id} {
+      // Anyone can see the leaderboard.
+      allow read: if true;
+      // Anyone can add a score, but only 3 capital letters and a sensible number.
+      allow create: if request.resource.data.keys().hasOnly(['name', 'score', 'createdAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name.matches('^[A-Z]{3}$')
+        && request.resource.data.score is int
+        && request.resource.data.score >= 1
+        && request.resource.data.score <= 500
+        && request.resource.data.createdAt == request.time;
+      // Nobody can change or delete scores from the game. (You can in the console.)
+      allow update, delete: if false;
+    }
+  }
+}
+```
+
+3. Click **Publish**.
+
+## 4. Connect it to the game
+1. Click the **gear icon** next to "Project Overview" → **Project settings**.
+2. Scroll to **Your apps** and click the **web icon** `</>`.
+3. App nickname: `snake`. Leave "Firebase Hosting" unticked. Click **Register app**.
+4. You'll see a code block containing `const firebaseConfig = { ... }`. Copy just that part and paste it in the chat thread.
+
+The firebaseConfig is safe to share. It's designed to be public, and the rules in step 3 are what protect the database.
+
+## Removing a bad score later
+Firestore Database → **Data** tab → `scores` → click the entry → the ⋮ menu → **Delete document**.
