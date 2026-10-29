@@ -33,7 +33,21 @@ const MODES = {
   medium: { name: 'MEDIUM', about: 'Computer snakes',  computerSnakes: 2, food: 3 },
 };
 
-const COMPUTER_COLORS = [0x3fa9f5, 0xffa500, 0xb36bff, 0xff66cc]; // blue, orange, purple, pink
+// Colors the player can pick for their snake. "head" is a lighter shade for the head.
+// To add a color, add a line here.
+const PLAYER_COLORS = [
+  { name: 'Green',  body: 0x32cd32, head: 0x7cfc00 },
+  { name: 'Yellow', body: 0xffd700, head: 0xffff88 },
+  { name: 'Pink',   body: 0xff66cc, head: 0xffaee6 },
+  { name: 'Cyan',   body: 0x00ced1, head: 0x88ffff },
+  { name: 'Purple', body: 0xb36bff, head: 0xdab8ff },
+  { name: 'Blue',   body: 0x3fa9f5, head: 0xa8dcff },
+  { name: 'Orange', body: 0xffa500, head: 0xffd27a },
+  { name: 'White',  body: 0xdddddd, head: 0xffffff },
+];
+
+// Computer snakes use these, skipping whichever one the player picked.
+const COMPUTER_COLORS = [0x3fa9f5, 0xffa500, 0xb36bff, 0xff66cc, 0x00ced1]; // blue, orange, purple, pink, cyan
 const RESPAWN_AFTER = 3000;  // milliseconds before a crashed computer snake comes back
 
 // Touch screens get swipe controls instead of arrow keys.
@@ -47,6 +61,21 @@ function loadHighScore(mode) {
 function saveHighScore(mode, score) {
   try { localStorage.setItem('snakeHighScore_' + mode, score); } catch (e) { }
 }
+
+// The player's color choice is saved the same way (as its number in PLAYER_COLORS).
+function loadColorChoice() {
+  try { return Math.min(Number(localStorage.getItem('snakeColor')) || 0, PLAYER_COLORS.length - 1); } catch (e) { return 0; }
+}
+function saveColorChoice(i) {
+  try { localStorage.setItem('snakeColor', i); } catch (e) { }
+}
+
+// Quick links: a link like ?mode=easy skips the start screen and goes
+// straight into that mode. Add &color=pink to pick a color too.
+// Examples:  snake.datasolutions365.com/?mode=easy
+//            snake.datasolutions365.com/?mode=medium&color=pink
+const LINK = new URLSearchParams(window.location.search);
+let quickLinkUsed = false; // only jump in once, so "Change mode" still shows the start screen
 
 // A clickable/tappable button: a box with text on it.
 function makeButton(scene, x, y, label, color, onClick) {
@@ -68,25 +97,68 @@ class StartScene extends Phaser.Scene {
   constructor() { super('Start'); } // 'Start' is this screen's name
 
   create() {
-    this.add.text(WIDTH / 2, HEIGHT / 2 - 170, 'SNAKE', { fontSize: '64px', color: '#7cfc00' }).setOrigin(0.5);
+    // Opened from a quick link? Jump straight into the game.
+    const linkMode = (LINK.get('mode') || '').toLowerCase();
+    if (MODES[linkMode] && !quickLinkUsed) {
+      quickLinkUsed = true;
+      const linkColor = PLAYER_COLORS.findIndex(c => c.name.toLowerCase() === (LINK.get('color') || '').toLowerCase());
+      this.scene.start('Game', { mode: linkMode, color: linkColor >= 0 ? linkColor : loadColorChoice() });
+      return;
+    }
+
+    this.add.text(WIDTH / 2, HEIGHT / 2 - 225, 'SNAKE', { fontSize: '64px', color: '#7cfc00' }).setOrigin(0.5);
 
     const howTo = TOUCH ? 'Swipe to steer' : 'Use the arrow keys to steer';
-    this.add.text(WIDTH / 2, HEIGHT / 2 - 80, howTo + '\nEat the red food to grow\nDon\'t hit the walls or any snake!',
+    this.add.text(WIDTH / 2, HEIGHT / 2 - 135, howTo + '\nEat the red food to grow\nDon\'t hit the walls or any snake!',
       { fontSize: '18px', color: '#cccccc', align: 'center', lineSpacing: 8 }).setOrigin(0.5);
 
-    this.add.text(WIDTH / 2, HEIGHT / 2 - 10, 'Choose a mode:', { fontSize: '20px', color: '#ffffff' }).setOrigin(0.5);
+    this.setupColorPicker(HEIGHT / 2 - 35);
+
+    this.add.text(WIDTH / 2, HEIGHT / 2 + 25, 'Choose a mode:', { fontSize: '20px', color: '#ffffff' }).setOrigin(0.5);
 
     // One button per mode, stacked down the screen. Keyboard: 1, 2, ...
     Object.keys(MODES).forEach((key, i) => {
       const mode = MODES[key];
-      const y = HEIGHT / 2 + 45 + i * 110;
-      const start = () => this.scene.start('Game', { mode: key }); // tell the game which mode
+      const y = HEIGHT / 2 + 75 + i * 105;
+      // Tell the game which mode, and which color the player picked.
+      const start = () => this.scene.start('Game', { mode: key, color: this.colorChoice });
       makeButton(this, WIDTH / 2, y, (TOUCH ? '' : (i + 1) + '. ') + mode.name + '\n' + mode.about,
         i === 0 ? '#7cfc00' : '#ffa500', start);
       this.add.text(WIDTH / 2, y + 50, 'Best: ' + loadHighScore(key), { fontSize: '16px', color: '#aaaaaa' }).setOrigin(0.5);
       const keyNames = ['ONE', 'TWO', 'THREE', 'FOUR'];
       this.input.keyboard.once('keydown-' + keyNames[i], start);
     });
+  }
+
+  // A row of colored squares. Click or tap one to pick it (on a computer,
+  // the left/right arrow keys work too). The picked one gets a white outline.
+  setupColorPicker(y) {
+    this.colorChoice = loadColorChoice();
+    const size = 32, gap = 10;
+    const rowWidth = PLAYER_COLORS.length * size + (PLAYER_COLORS.length - 1) * gap;
+    const firstX = WIDTH / 2 - rowWidth / 2 + size / 2;
+
+    this.colorLabel = this.add.text(WIDTH / 2, y - 34, '', { fontSize: '18px', color: '#ffffff' }).setOrigin(0.5);
+    this.colorOutline = this.add.rectangle(0, y, size + 8, size + 8).setStrokeStyle(3, 0xffffff);
+
+    const pick = i => {
+      this.colorChoice = i;
+      saveColorChoice(i);
+      this.colorOutline.x = firstX + i * (size + gap);
+      this.colorLabel.setText('Your color: ' + PLAYER_COLORS[i].name);
+    };
+
+    PLAYER_COLORS.forEach((color, i) => {
+      this.add.rectangle(firstX + i * (size + gap), y, size, size, color.body)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => pick(i));
+    });
+
+    const count = PLAYER_COLORS.length;
+    this.input.keyboard.on('keydown-LEFT', () => pick((this.colorChoice + count - 1) % count));
+    this.input.keyboard.on('keydown-RIGHT', () => pick((this.colorChoice + 1) % count));
+
+    pick(this.colorChoice);
   }
 }
 
@@ -99,10 +171,12 @@ class GameScene extends Phaser.Scene {
   constructor() { super('Game'); }
 
   // ----- 3a. Setup: runs once each time a new game starts -----
-  // data is the { mode } sent from the start screen.
+  // data is the { mode, color } sent from the start screen.
   create(data) {
     this.modeKey = data.mode;
     this.mode = MODES[data.mode];
+    this.colorChoice = data.color;
+    this.color = PLAYER_COLORS[data.color];
 
     // The snake is a list of grid positions. Item 0 is the head.
     // It starts 3 squares long in the middle of the board, facing right.
@@ -130,7 +204,9 @@ class GameScene extends Phaser.Scene {
     for (let i = 0; i < this.mode.food; i++) this.foods.push(this.freeSpot());
 
     // Computer snakes (see section 3h).
-    for (let i = 0; i < this.mode.computerSnakes; i++) this.spawnComputerSnake(COMPUTER_COLORS[i % COMPUTER_COLORS.length]);
+    // They get the computer colors in order, skipping the player's color.
+    const computerColors = COMPUTER_COLORS.filter(c => c !== this.color.body);
+    for (let i = 0; i < this.mode.computerSnakes; i++) this.spawnComputerSnake(computerColors[i % computerColors.length]);
 
     // Run moveSnake() over and over on a timer, instead of every frame,
     // so the snake moves one square at a time.
@@ -268,9 +344,9 @@ class GameScene extends Phaser.Scene {
       this.graphics.fillRect(cs.body[0].x * CELL + 6, cs.body[0].y * CELL + 6, CELL - 13, CELL - 13);
     });
 
-    // Snake: the head is a brighter green than the body.
+    // Player's snake, in the color they picked. The head is a lighter shade.
     this.snake.forEach((part, i) => {
-      this.graphics.fillStyle(i === 0 ? 0x7cfc00 : 0x32cd32);
+      this.graphics.fillStyle(i === 0 ? this.color.head : this.color.body);
       // -1 leaves a thin gap so you can see each square.
       this.graphics.fillRect(part.x * CELL, part.y * CELL, CELL - 1, CELL - 1);
     });
@@ -288,7 +364,7 @@ class GameScene extends Phaser.Scene {
     // Wait a moment so you can see where you crashed, then show the
     // game over screen. The { } part passes the score along to it.
     this.time.delayedCall(700, () => {
-      this.scene.start('GameOver', { mode: this.modeKey, score: this.score, best: Math.max(best, this.score), newBest });
+      this.scene.start('GameOver', { mode: this.modeKey, color: this.colorChoice, score: this.score, best: Math.max(best, this.score), newBest });
     });
   }
 }
@@ -392,7 +468,7 @@ class GameOverScene extends Phaser.Scene {
     this.add.text(WIDTH / 2, HEIGHT / 2 + 15, data.newBest ? 'New best score!' : 'Best: ' + data.best,
       { fontSize: '20px', color: data.newBest ? '#ffff66' : '#cccccc' }).setOrigin(0.5);
 
-    const playAgain = () => this.scene.start('Game', { mode: data.mode }); // same mode again
+    const playAgain = () => this.scene.start('Game', { mode: data.mode, color: data.color }); // same mode and color again
     const changeMode = () => this.scene.start('Start');
 
     // Short pause first, so a swipe that was still happening doesn't
