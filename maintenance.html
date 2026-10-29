@@ -6,21 +6,77 @@
   <title>Snake - Back soon</title>
   <style>
     body {
-      margin: 0; height: 100vh; display: flex; flex-direction: column;
-      justify-content: center; align-items: center; text-align: center;
-      background: #1b1b1b; color: #ffffff; font-family: monospace; padding: 0 16px;
+      margin: 0; height: 100vh; overflow: hidden;
+      background: #1b1b1b; color: #ffffff; font-family: monospace;
     }
+    /* The wandering snake is drawn on this canvas, behind the message. */
+    canvas { position: fixed; inset: 0; }
+    .message {
+      position: relative; height: 100vh; display: flex; flex-direction: column;
+      justify-content: center; align-items: center; text-align: center; padding: 0 16px;
+    }
+    .box { background: rgba(27, 27, 27, 0.85); padding: 24px 32px; border-radius: 12px; }
     h1 { color: #7cfc00; font-size: 48px; margin: 0 0 16px; }
-    p { font-size: 20px; color: #cccccc; max-width: 500px; }
-    .snake { display: flex; gap: 2px; margin-bottom: 24px; }
-    .snake span { width: 20px; height: 20px; background: #32cd32; }
-    .snake span:first-child { background: #7cfc00; }
+    p { font-size: 20px; color: #cccccc; max-width: 500px; margin: 0; }
   </style>
 </head>
 <body>
-  <div class="snake"><span></span><span></span><span></span><span></span></div>
-  <h1>Be right back!</h1>
-  <!-- Change this message to whatever you want players to see -->
-  <p>Snake is getting some upgrades. Check back soon!</p>
+  <canvas id="bg"></canvas>
+  <div class="message">
+    <div class="box">
+      <h1>Be right back!</h1>
+      <!-- Change this message to whatever you want players to see -->
+      <p>Snake is getting some upgrades. Check back soon!</p>
+    </div>
+  </div>
+
+  <script>
+    // A snake that wanders around the screen on its own.
+    const CELL = 20;        // size of one square, in pixels
+    const LENGTH = 12;      // how many squares long the snake is
+    const MOVE_EVERY = 90;  // milliseconds between steps
+
+    const canvas = document.getElementById('bg');
+    const ctx = canvas.getContext('2d');
+    let cols, rows;
+
+    function resize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      cols = Math.ceil(canvas.width / CELL);
+      rows = Math.ceil(canvas.height / CELL);
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    // Start in the middle, stretched out to the left, moving right.
+    const startX = Math.floor(cols / 2), startY = Math.floor(rows / 2);
+    const snake = [];
+    for (let i = 0; i < LENGTH; i++) snake.push({ x: startX - i, y: startY });
+    let dir = { x: 1, y: 0 };
+
+    function step() {
+      // Every so often, turn left or right at random.
+      if (Math.random() < 0.15) {
+        dir = Math.random() < 0.5 ? { x: -dir.y, y: dir.x } : { x: dir.y, y: -dir.x };
+      }
+
+      // Same trick as the real game: new head in front, drop the tail.
+      // Going off an edge wraps to the other side.
+      const head = snake[0];
+      snake.unshift({ x: (head.x + dir.x + cols) % cols, y: (head.y + dir.y + rows) % rows });
+      snake.pop();
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      snake.forEach((part, i) => {
+        ctx.fillStyle = i === 0 ? '#7cfc00' : '#32cd32';
+        ctx.globalAlpha = 1 - i / (LENGTH + 4); // tail fades out a little
+        ctx.fillRect(part.x * CELL, part.y * CELL, CELL - 1, CELL - 1);
+      });
+      ctx.globalAlpha = 1;
+    }
+
+    setInterval(step, MOVE_EVERY);
+  </script>
 </body>
 </html>
