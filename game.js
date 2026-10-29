@@ -88,8 +88,9 @@ const ROCK_SMASH_COSTS = 2;      // squares you lose for smashing through a rock
 // Mazes: now and then a maze shows up on a screen nobody is on.
 // Hit one of its walls and you crash. Go in one gap and out the other
 // and you get the prize. Only in modes with mazes: true (they need a big world).
-const MAZE_ACROSS = 7;       // maze size in paths (the walls make it 2 x this + 1 squares)
+const MAZE_ACROSS = 7;       // most paths across and down (fewer if the screen is small)
 const MAZE_DOWN = 5;
+const MAZE_PATH_WIDTH = 2;   // how many squares wide the paths are (walls are 1)
 const MAZE_FIRST = 10000;    // milliseconds into the game before the first maze
 const MAZE_EVERY = 20000;    // milliseconds between one maze going and the next one coming
 const MAZE_LASTS = 45000;    // milliseconds a maze stays if nobody gets through (it blinks first)
@@ -1447,7 +1448,10 @@ GameScene.prototype.updateMaze = function () {
 
 // Build a new maze in the middle of a screen that no player is on.
 GameScene.prototype.makeMaze = function () {
-  const w = MAZE_ACROSS * 2 + 1, h = MAZE_DOWN * 2 + 1;
+  // How many paths fit: each path is MAZE_PATH_WIDTH squares plus a wall.
+  const across = Math.min(MAZE_ACROSS, Math.floor((this.frameCols - 3) / (MAZE_PATH_WIDTH + 1)));
+  const down = Math.min(MAZE_DOWN, Math.floor((this.frameRows - 3) / (MAZE_PATH_WIDTH + 1)));
+  const w = across * (MAZE_PATH_WIDTH + 1) + 1, h = down * (MAZE_PATH_WIDTH + 1) + 1;
   const busy = this.players.filter(p => !p.crashed && p.body.length).map(p => this.screenOf(p.body[0]));
   const free = [];
   for (let sx = 0; sx < this.screens; sx++) {
@@ -1455,7 +1459,7 @@ GameScene.prototype.makeMaze = function () {
       if (!busy.some(b => b.sx === sx && b.sy === sy)) free.push({ sx, sy });
     }
   }
-  if (!free.length || w > this.frameCols - 2 || h > this.frameRows - 2) {
+  if (!free.length || across < 2 || down < 2) {
     this.nextMazeAt = this.clock + 2000; // try again soon
     return;
   }
@@ -1471,11 +1475,22 @@ GameScene.prototype.makeMaze = function () {
     return;
   }
 
-  // Start with every square a wall, then dig paths with a "random walk
-  // that backs up when it's stuck". Paths are on the odd squares.
+  // Plan it on a small grid first: odd spots are paths, even spots are
+  // walls. Start with everything a wall, then dig paths with a "random
+  // walk that backs up when it's stuck".
+  // On the board, each plan spot becomes a block: 1 square for a wall
+  // line, MAZE_PATH_WIDTH squares for a path, so the paths come out wide.
+  const planW = across * 2 + 1, planH = down * 2 + 1;
+  const start = i => Math.floor(i / 2) * (MAZE_PATH_WIDTH + 1) + (i % 2); // where plan spot i begins
+  const size = i => i % 2 ? MAZE_PATH_WIDTH : 1;                           // and how many squares it covers
+  const block = (px, py) => {
+    const squares = [];
+    for (let x = 0; x < size(px); x++) for (let y = 0; y < size(py); y++) squares.push((left + start(px) + x) + ',' + (top + start(py) + y));
+    return squares;
+  };
   const walls = new Set();
-  for (let x = 0; x < w; x++) for (let y = 0; y < h; y++) walls.add((left + x) + ',' + (top + y));
-  const dig = (x, y) => walls.delete((left + x) + ',' + (top + y));
+  for (let px = 0; px < planW; px++) for (let py = 0; py < planH; py++) block(px, py).forEach(key => walls.add(key));
+  const dig = (px, py) => block(px, py).forEach(key => walls.delete(key));
   const visited = new Set(['1,1']);
   const path = [{ x: 1, y: 1 }];
   dig(1, 1);
@@ -1483,7 +1498,7 @@ GameScene.prototype.makeMaze = function () {
     const at = path[path.length - 1];
     const next = [{ x: 2, y: 0 }, { x: -2, y: 0 }, { x: 0, y: 2 }, { x: 0, y: -2 }]
       .map(d => ({ x: at.x + d.x, y: at.y + d.y, d }))
-      .filter(n => n.x > 0 && n.x < w && n.y > 0 && n.y < h && !visited.has(n.x + ',' + n.y));
+      .filter(n => n.x > 0 && n.x < planW && n.y > 0 && n.y < planH && !visited.has(n.x + ',' + n.y));
     if (!next.length) { path.pop(); continue; }
     const n = Phaser.Utils.Array.GetRandom(next);
     dig(at.x + n.d.x / 2, at.y + n.d.y / 2); // knock down the wall in between
@@ -1492,11 +1507,11 @@ GameScene.prototype.makeMaze = function () {
     path.push({ x: n.x, y: n.y });
   }
 
-  // A gap on the left side and one on the right.
-  const gapA = { x: left, y: top + 1 + 2 * Phaser.Math.Between(0, MAZE_DOWN - 1) };
-  const gapB = { x: left + w - 1, y: top + 1 + 2 * Phaser.Math.Between(0, MAZE_DOWN - 1) };
-  walls.delete(gapA.x + ',' + gapA.y);
-  walls.delete(gapB.x + ',' + gapB.y);
+  // A gap on the left side and one on the right (each a list of squares).
+  const toSpot = key => { const [x, y] = key.split(',').map(Number); return { x, y }; };
+  const gapA = block(0, 1 + 2 * Phaser.Math.Between(0, down - 1)).map(toSpot);
+  const gapB = block(planW - 1, 1 + 2 * Phaser.Math.Between(0, down - 1)).map(toSpot);
+  [...gapA, ...gapB].forEach(spot => walls.delete(spot.x + ',' + spot.y));
 
   // Clear rocks, food and power-ups out of the way.
   [...this.rocks.keys()].forEach(key => {
@@ -1528,7 +1543,7 @@ GameScene.prototype.checkMaze = function (p) {
   const m = this.maze;
   if (!m) return;
   const head = p.body[0];
-  const onGap = gap => head.x === gap.x && head.y === gap.y;
+  const onGap = gap => gap.some(spot => head.x === spot.x && head.y === spot.y);
   const inside = head.x >= m.left && head.x < m.left + m.w && head.y >= m.top && head.y < m.top + m.h;
   if (!inside) { p.inMazeFrom = null; return; }
   if (onGap(m.gapA) || onGap(m.gapB)) {
@@ -1558,7 +1573,7 @@ GameScene.prototype.drawMaze = function () {
   });
   // The two gaps glow green.
   g.fillStyle(0x7cfc00, 0.4);
-  [m.gapA, m.gapB].forEach(gap => g.fillRect(gap.x * CELL, gap.y * CELL, CELL - 1, CELL - 1));
+  [...m.gapA, ...m.gapB].forEach(spot => g.fillRect(spot.x * CELL, spot.y * CELL, CELL - 1, CELL - 1));
 };
 
 // A message across the middle of the screen for a few seconds.

@@ -286,7 +286,7 @@ function sendMaze(maze) {
   if (!session) return;
   session.room.child('maze').set(maze ? {
     left: maze.left, top: maze.top, w: maze.w, h: maze.h, sx: maze.sx, sy: maze.sy, until: maze.until,
-    walls: [...maze.walls].join(';'), a: maze.gapA.x + ',' + maze.gapA.y, b: maze.gapB.x + ',' + maze.gapB.y,
+    walls: [...maze.walls].join(';'), a: packSpots(maze.gapA), b: packSpots(maze.gapB),
   } : null);
 }
 
@@ -298,7 +298,7 @@ function onMaze(callback) {
     if (!raw) { callback(null); return; }
     callback({
       left: raw.left, top: raw.top, w: raw.w, h: raw.h, sx: raw.sx, sy: raw.sy, until: raw.until,
-      walls: new Set(raw.walls.split(';')), gapA: unpackSpots(raw.a)[0], gapB: unpackSpots(raw.b)[0],
+      walls: new Set(raw.walls.split(';')), gapA: unpackSpots(raw.a), gapB: unpackSpots(raw.b),
     });
   };
   ref.on('value', handler);
