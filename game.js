@@ -126,6 +126,14 @@ const SKIN_COLORS = {
   diamond: { body: 0x8fdcf5, head: 0xe3f8ff },
 };
 
+// Skin powers (what each one does is in rewards.js, see skinPower() in 3o).
+// Only in games on your own (not 2 players or online).
+const TIGER_COMBO_EXTRA = 1500;  // milliseconds more to keep a combo going
+const LEOPARD_REACH = 3;         // apples this close slide to you
+const GOLD_EVERY = 5;            // every 5th apple...
+const GOLD_BONUS = 3;            // ...is worth this many more points
+const DIAMOND_SHIELD_BACK = 30000; // milliseconds until a used diamond shield comes back
+
 // Items (won daily, see rewards.js): how long each lasts once you use it.
 // The shield lasts until your next crash.
 const ITEM_LASTS = { magnet: 10000, freeze: 8000, double: 15000 };
@@ -259,6 +267,7 @@ class StartScene extends Phaser.Scene {
     // buttons from last time (they're gone now).
     this.p2Label = null;
     this.skinCards = null;
+    this.powerShown = null;
     this.loginBox = null;
     this.twoPlayerSetup = null;
 
@@ -374,13 +383,14 @@ class StartScene extends Phaser.Scene {
     // The skin cards: 7 in a row, or 4 + 3 on a phone.
     const perRow = PORTRAIT ? 4 : 7, cardW = PORTRAIT ? 92 : 106, cardH = PORTRAIT ? 92 : 112, gap = PORTRAIT ? 6 : 5;
     const top = 166;
-    box.add(this.add.text(WIDTH / 2, top - 22, 'SKINS: ' + (TOUCH ? 'tap' : 'click') + ' one to wear it', { fontSize: '16px', color: '#cccccc' }).setOrigin(0.5));
+    box.add(this.add.text(WIDTH / 2, top - 22, 'SKINS: ' + (TOUCH ? 'tap' : 'click') + (PORTRAIT ? ' one to wear it' : ' one to wear it or see its power'), { fontSize: '16px', color: '#cccccc' }).setOrigin(0.5));
     this.skinCards = Rewards.SKINS.map((skin, i) => {
       const x = WIDTH / 2 + ((i % perRow) - (perRow - 1) / 2) * (cardW + gap);
       const y = top + Math.floor(i / perRow) * (cardH + gap) + cardH / 2;
       const back = this.add.rectangle(x, y, cardW, cardH, 0x222222).setInteractive({ useHandCursor: true })
         .on('pointerdown', () => {
-          if (!Rewards.isUnlocked(skin.key)) return;
+          this.powerShown = skin.key; // says its power, even when it's locked
+          if (!Rewards.isUnlocked(skin.key)) { this.showSkinChoice(); return; }
           Sound.play('click');
           Rewards.setSkin(skin.key);
           this.showSkinChoice();
@@ -392,8 +402,13 @@ class StartScene extends Phaser.Scene {
       return { skin, back, art, note };
     });
 
+    // What the skin does (the one you wear, or the last one tapped).
+    const cardsEnd = top + Math.ceil(Rewards.SKINS.length / perRow) * (cardH + gap);
+    this.powerLine = this.add.text(WIDTH / 2, cardsEnd + 8, '', { fontSize: PORTRAIT ? '13px' : '16px', color: '#7cfc00', align: 'center', wordWrap: { width: WIDTH - 24 } }).setOrigin(0.5, 0);
+    box.add(this.powerLine);
+
     // The achievements: two columns, or one on a phone.
-    const listTop = top + Math.ceil(Rewards.SKINS.length / perRow) * (cardH + gap) + 14;
+    const listTop = cardsEnd + (PORTRAIT ? 30 : 40);
     const got = Rewards.ACHIEVEMENTS.filter(a => Rewards.hasAchievement(a.key)).length;
     box.add(this.add.text(WIDTH / 2, listTop, 'ACHIEVEMENTS  ' + got + ' / ' + Rewards.ACHIEVEMENTS.length, { fontSize: '16px', color: '#cccccc' }).setOrigin(0.5));
     const lines = Rewards.ACHIEVEMENTS.map(a => (Rewards.hasAchievement(a.key) ? '✅ ' + a.icon + ' ' : '⬜ 🔒 ') + a.name + ': ' + a.how);
@@ -472,6 +487,9 @@ class StartScene extends Phaser.Scene {
   // Light up the skin being worn, and say how to unlock the others.
   showSkinChoice() {
     const wearing = Rewards.skin();
+    const shown = Rewards.SKINS.find(s => s.key === (this.powerShown || wearing));
+    this.powerLine.setText(PORTRAIT ? shown.power : shown.name + ' power: ' + shown.power + (shown.key === 'classic' ? '' : '  (Easy & Medium)'))
+      .setColor(Rewards.isUnlocked(shown.key) ? '#7cfc00' : '#aaaaaa');
     this.skinCards.forEach(({ skin, back, note }) => {
       const open = Rewards.isUnlocked(skin.key);
       back.setFillStyle(skin.key === wearing ? 0x3d3d1a : 0x222222).setStrokeStyle(3, skin.key === wearing ? 0xffd700 : 0x444444);
@@ -732,6 +750,7 @@ class GameScene extends Phaser.Scene {
     if (!this.online) {
       this.me = this.players[0];
       this.me.skin = Rewards.skin();
+      if (this.players.length === 1) this.skinPower(this.me); // see 3o
     }
 
     // Score, shown in the top-left corner.
@@ -826,7 +845,12 @@ class GameScene extends Phaser.Scene {
 
   // "🔥 x3" next to the score while a combo is going.
   comboText(p) {
-    return p.combo >= 2 && this.clock - p.lastAteAt <= COMBO_WINDOW ? '  🔥 x' + p.combo : '';
+    return p.combo >= 2 && this.clock - p.lastAteAt <= this.comboWindow(p) ? '  🔥 x' + p.combo : '';
+  }
+
+  // How long between apples keeps a combo going (🐯 tiger skin: longer).
+  comboWindow(p) {
+    return COMBO_WINDOW + (p.power === 'tiger' ? TIGER_COMBO_EXTRA : 0);
   }
 
   // ----- 3b. Controls -----
@@ -1097,8 +1121,14 @@ class GameScene extends Phaser.Scene {
   // Another apple: if it's soon after the last one, the combo goes up
   // and gives bonus points. Too slow and it starts again at 1.
   countCombo(p) {
-    p.combo = this.clock - p.lastAteAt <= COMBO_WINDOW ? p.combo + 1 : 1;
+    p.combo = this.clock - p.lastAteAt <= this.comboWindow(p) ? p.combo + 1 : 1;
     p.lastAteAt = this.clock;
+    // 💰 Gold skin: every 5th apple is worth more.
+    p.apples = (p.apples || 0) + 1;
+    if (p.power === 'gold' && p.apples % GOLD_EVERY === 0) {
+      p.score += GOLD_BONUS;
+      this.pops.push({ x: p.body[0].x, y: p.body[0].y, kind: 'golden' });
+    }
     if (p.combo < 2) return;
     p.score += Math.min(p.combo - 1, COMBO_MAX_BONUS);
     this.pops.push({ x: p.body[0].x, y: p.body[0].y, kind: 'combo' + p.combo });
@@ -1170,7 +1200,8 @@ class GameScene extends Phaser.Scene {
     }
     // All the others last a few seconds. Speed and slow cancel each other out.
     if (kind !== 'grow' && kind !== 'shrink') {
-      p.until[kind] = this.clock + EFFECT_LASTS;
+      const lucky = p.power === 'rainbow' && POWER_UPS[kind].good; // 🌈 rainbow skin
+      p.until[kind] = this.clock + EFFECT_LASTS * (lucky ? 2 : 1);
       if (kind === 'speed') delete p.until.slow;
       if (kind === 'slow') delete p.until.speed;
     }
@@ -1199,14 +1230,14 @@ class GameScene extends Phaser.Scene {
       // A burst of sparkles first (see 3n), then the words, if any.
       // A combo's kind has its number on the end, like combo3.
       const combo = pop.kind.startsWith('combo') ? Number(pop.kind.slice(5)) : 0;
-      const bursts = { eat: [0xff5252, 8], crash: [0xffaa00, 26], gulp: [0xffffff, 30], smash: [0x9e9e9e, 16], maze: [0xffd700, 40], shield: [0x66ccff, 30] };
+      const bursts = { eat: [0xff5252, 8], crash: [0xffaa00, 26], gulp: [0xffffff, 30], smash: [0x9e9e9e, 16], maze: [0xffd700, 40], shield: [0x66ccff, 30], golden: [0xffd700, 20], shieldBack: [0x8fdcf5, 20] };
       if (combo) bursts[pop.kind] = [0xffa000, 10 + combo * 4];
       const [color, count] = bursts[pop.kind] || [POWER_UPS[pop.kind] && POWER_UPS[pop.kind].good === false ? 0xff4444 : 0x7cfc00, 18];
       this.burst(pop.x, pop.y, color, count);
       // A sound too, if it happened on the screen you're looking at.
       const here = this.screenOf(pop);
       if (this.screenShown === null || this.screenShown === here.sx + ',' + here.sy) {
-        const kind = POWER_UPS[pop.kind] ? (POWER_UPS[pop.kind].good === false ? 'powerdown' : 'powerup') : combo ? 'combo' : pop.kind === 'shield' ? 'smash' : pop.kind;
+        const kind = POWER_UPS[pop.kind] ? (POWER_UPS[pop.kind].good === false ? 'powerdown' : 'powerup') : combo ? 'combo' : pop.kind === 'shield' ? 'smash' : pop.kind === 'golden' || pop.kind === 'shieldBack' ? 'powerup' : pop.kind;
         Sound.play(kind, combo);
       }
       const extras = {
@@ -1214,6 +1245,8 @@ class GameScene extends Phaser.Scene {
         gulp: { says: 'GULP!', good: true },
         smash: { says: 'SMASH! -' + ROCK_SMASH_COSTS, good: true },
         shield: { says: '🛡️ SAVED!', good: true, color: '#66ccff' },
+        golden: { says: '💰 GOLDEN! +' + GOLD_BONUS, good: true, color: '#ffd700' },
+        shieldBack: { says: '💎 SHIELD BACK!', good: true, color: '#8fdcf5' },
       };
       if (combo) extras[pop.kind] = { says: 'COMBO x' + combo + '! +' + Math.min(combo - 1, COMBO_MAX_BONUS), good: true, color: '#ffb300', size: Math.min(20 + combo * 2, 34) };
       const info = extras[pop.kind] || POWER_UPS[pop.kind];
@@ -2024,6 +2057,7 @@ GameScene.prototype.knockOut = function (p, leaveFood) {
   if (p.shield) {
     p.shield = false;
     p.bounced = true;
+    if (p.power === 'diamond') p.shieldBackAt = this.clock + DIAMOND_SHIELD_BACK;
     this.pops.push({ x: p.body[0].x, y: p.body[0].y, kind: 'shield' });
     return;
   }
@@ -2134,17 +2168,32 @@ GameScene.prototype.afterItems = function (p) {
     });
     if (safe) { p.direction = safe; p.nextDirection = safe; }
   }
+  if (p.shieldBackAt && this.clock >= p.shieldBackAt) {
+    p.shieldBackAt = 0;
+    p.shield = true;
+    this.pops.push({ x: p.body[0].x, y: p.body[0].y, kind: 'shieldBack' });
+  }
   if (this.has(p, 'double') && p.score > p.scoreBefore) p.score += p.score - p.scoreBefore;
   if (p === this.me) Object.keys(this.itemButtons || {}).forEach(key => this.showItem(key));
 };
 
+// Skin powers (see rewards.js): the skin you wear does something too.
+// The others are checked where they happen: 🐯 comboWindow(), 🐆
+// pullApples(), 🌈 usePowerUp(), 💰 countCombo(), 💎 knockOut().
+GameScene.prototype.skinPower = function (p) {
+  p.power = p.skin;
+  if (p.power === 'lava' || p.power === 'diamond') p.shield = true; // 🔥💎 start with a shield
+};
+
 // 🧲 Every step, apples close to a magnet snake slide one square toward it.
+// 🐆 The leopard skin does the same, but only from close by.
 GameScene.prototype.pullApples = function () {
-  this.players.filter(p => !p.crashed && this.has(p, 'magnet')).forEach(p => {
+  this.players.filter(p => !p.crashed && (this.has(p, 'magnet') || p.power === 'leopard')).forEach(p => {
     const head = p.body[0];
+    const reach = this.has(p, 'magnet') ? MAGNET_REACH : LEOPARD_REACH;
     this.foods.forEach(food => {
       const dx = head.x - food.x, dy = head.y - food.y;
-      if (Math.abs(dx) + Math.abs(dy) > MAGNET_REACH || Math.abs(dx) + Math.abs(dy) < 2) return;
+      if (Math.abs(dx) + Math.abs(dy) > reach || Math.abs(dx) + Math.abs(dy) < 2) return;
       const to = Math.abs(dx) >= Math.abs(dy) ? { x: food.x + Math.sign(dx), y: food.y } : { x: food.x, y: food.y + Math.sign(dy) };
       if (!this.isTaken(to)) { food.x = to.x; food.y = to.y; }
     });

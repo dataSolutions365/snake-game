@@ -26,16 +26,25 @@
 //  1. SKINS
 //  How each one looks is in drawSnakeBody() in game.js (section 3n).
 //  unlocked: a test on your lifetime totals (see section 4).
+//  power: what wearing it does, in Easy and Medium (see skinPower() in
+//  game.js, section 3o). Online, skins are only for looks.
 // =====================================================================
 
 const SKINS = [
-  { key: 'classic', name: 'Classic', how: 'Yours from the start',      unlocked: t => true },
-  { key: 'tiger',   name: 'Tiger',   how: 'Play 5 games',              unlocked: t => t.games >= 5 },
-  { key: 'leopard', name: 'Leopard', how: 'Eat 100 apples',     unlocked: t => t.apples >= 100 },
-  { key: 'rainbow', name: 'Rainbow', how: 'Get a x5 combo',            unlocked: t => t.bestCombo >= 5 },
-  { key: 'gold',    name: 'Gold',    how: 'Score 50 once',      unlocked: t => t.bestScore >= 50 },
-  { key: 'lava',    name: 'Lava',    how: '3 challenges',       unlocked: t => t.dailiesDone >= 3 },
-  { key: 'diamond', name: 'Diamond', how: 'Day 7 prize',        unlocked: t => t.grandPrizes >= 1 },
+  { key: 'classic', name: 'Classic', how: 'Yours from the start', unlocked: t => true,
+    power: 'No power, just a good old snake' },
+  { key: 'tiger',   name: 'Tiger',   how: 'Play 5 games',         unlocked: t => t.games >= 5,
+    power: '🐯 Pounce: combos last 1.5 sec longer' },
+  { key: 'leopard', name: 'Leopard', how: 'Eat 100 apples',       unlocked: t => t.apples >= 100,
+    power: '🐆 Sniffer: nearby apples slide to you' },
+  { key: 'rainbow', name: 'Rainbow', how: 'Get a x5 combo',       unlocked: t => t.bestCombo >= 5,
+    power: '🌈 Lucky: good power-ups last 2x as long' },
+  { key: 'gold',    name: 'Gold',    how: 'Score 50 once',        unlocked: t => t.bestScore >= 50,
+    power: '💰 Golden apples: every 5th apple +3' },
+  { key: 'lava',    name: 'Lava',    how: '3 challenges',         unlocked: t => t.dailiesDone >= 3,
+    power: '🔥 Hot head: a free shield every game' },
+  { key: 'diamond', name: 'Diamond', how: 'Day 7 prize',          unlocked: t => t.grandPrizes >= 1,
+    power: '💎 Unbreakable: shield comes back in 30 sec' },
 ];
 
 
