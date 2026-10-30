@@ -11,6 +11,7 @@
 //    3b. ITEMS        won from challenges and logins, used in a game
 //    3c. DAILY LOGIN  a prize each day, a grand prize on day 7
 //    4. SAVING        lifetime totals, kept in the browser
+//    5. LEVELS        more of the game opens up as you play
 //
 //  game.js uses it like this:
 //    Rewards.startGame(mode)       when a game starts
@@ -193,9 +194,34 @@ function newGame(mode) {
   return { mode, score: 0, apples: 0, bestCombo: 0, mazes: 0, swallows: 0, smashes: 0, powerUps: 0, time: 0 };
 }
 
+// =====================================================================
+//  5. LEVELS
+//  New players start simple: more of the game opens up as they play.
+//  games: how many games you need to have played. opens: what it unlocks
+//  (game.js asks Rewards.has('medium') and so on).
+// =====================================================================
+
+const LEVELS = [
+  { games: 0, opens: [],                    says: 'Easy mode',             short: 'Easy' },
+  { games: 2, opens: ['medium', 'rewards'], says: 'Medium mode and skins', short: 'Medium & skins' },
+  { games: 4, opens: ['items'],             says: 'items and daily prizes', short: 'items & prizes' },
+  { games: 6, opens: ['online'],            says: 'online and 2 players',  short: 'online play' },
+];
+
+// Your level (1, 2, ...), and what the next one needs.
+function level() {
+  const n = LEVELS.filter(l => totals.games >= l.games).length;
+  const next = LEVELS[n];
+  return { level: n, max: !next, gamesLeft: next ? next.games - totals.games : 0, nextSays: next ? next.says : '', nextShort: next ? next.short : '' };
+}
+const has = feature => LEVELS.some(l => totals.games >= l.games && l.opens.includes(feature));
+// The level that opens a feature.
+const levelFor = feature => LEVELS.findIndex(l => l.opens.includes(feature)) + 1;
+
 // Everything you have right now, so we can spot what's new after a change.
 function unlockedNow() {
   return [
+    'level:' + level().level,
     ...SKINS.filter(s => s.unlocked(totals)).map(s => 'skin:' + s.key),
     ...ACHIEVEMENTS.filter(a => a.earned(totals)).map(a => 'ach:' + a.key),
   ];
@@ -206,6 +232,7 @@ function whatsNew(before) {
   return unlockedNow().filter(key => !before.includes(key)).map(key => {
     const [kind, name] = key.split(':');
     if (kind === 'skin') return '🎨 New skin: ' + SKINS.find(s => s.key === name).name + '!';
+    if (kind === 'level') return '⭐ Level ' + name + '! New: ' + LEVELS[name - 1].says;
     const a = ACHIEVEMENTS.find(x => x.key === name);
     return a.icon + ' Achievement: ' + a.name + '!';
   });
@@ -254,7 +281,8 @@ function skin() {
 }
 
 window.Rewards = {
-  SKINS, ACHIEVEMENTS, ITEMS, LOGIN_PRIZES,
+  SKINS, ACHIEVEMENTS, ITEMS, LOGIN_PRIZES, LEVELS,
+  level, has, levelFor,
   items: () => totals.items,
   useItem(key) {
     if (!totals.items[key]) return false;

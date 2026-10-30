@@ -34,6 +34,8 @@ window.TestMode = {
 if (testModeOn()) {
   Object.assign(Rewards, {
     isUnlocked: () => true,
+    has: () => true,
+    level: () => ({ level: Rewards.LEVELS.length, max: true, gamesLeft: 0, nextSays: '' }),
     // The skin worn in test mode is kept apart, so leaving test mode
     // puts back the one you really have.
     skin() { try { return localStorage.getItem('snakeTestSkin') || 'classic'; } catch (e) { return 'classic'; } },
