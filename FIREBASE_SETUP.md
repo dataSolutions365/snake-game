@@ -71,6 +71,15 @@ service cloud.firestore {
         && request.resource.data.device is string && request.resource.data.device.size() <= 300
         && request.resource.data.version is int;
     }
+    // Save codes (save.js): progress saved under an 8-letter code. You can
+    // only open one if you know its code (no listing them all).
+    match /saves/{code} {
+      allow get: if code.matches('^[A-HJ-NP-Z2-9]{8}$');
+      allow create, update: if code.matches('^[A-HJ-NP-Z2-9]{8}$')
+        && request.resource.data.keys().hasOnly(['data', 'savedAt'])
+        && request.resource.data.data is string && request.resource.data.data.size() <= 20000
+        && request.resource.data.savedAt is int;
+    }
   }
 }
 ```

@@ -243,7 +243,8 @@ function addSoundButtons(scene, x, y, place = button => button) {
 class StartScene extends Phaser.Scene {
   constructor() { super('Start'); } // 'Start' is this screen's name
 
-  create() {
+  // data: { openRewards: true } to open straight to the Rewards screen.
+  create(data = {}) {
     // Phaser reuses this screen each time it opens, so forget the
     // buttons from last time (they're gone now).
     this.p2Label = null;
@@ -281,6 +282,7 @@ class StartScene extends Phaser.Scene {
     this.setupColorPicker(HEIGHT / 2 - 35);
     this.setupLegend();
     this.setupRewards();
+    if (data.openRewards) { this.rewards.setVisible(true); this.showSkinChoice(); }
     addSoundButtons(this, 10, 54);
     if (!TOUCH) this.setupControlsPicker();
 
@@ -385,14 +387,15 @@ class StartScene extends Phaser.Scene {
     const got = Rewards.ACHIEVEMENTS.filter(a => Rewards.hasAchievement(a.key)).length;
     box.add(this.add.text(WIDTH / 2, listTop, 'ACHIEVEMENTS  ' + got + ' / ' + Rewards.ACHIEVEMENTS.length, { fontSize: '16px', color: '#cccccc' }).setOrigin(0.5));
     const lines = Rewards.ACHIEVEMENTS.map(a => (Rewards.hasAchievement(a.key) ? '✅ ' + a.icon + ' ' : '⬜ 🔒 ') + a.name + ': ' + a.how);
-    const style = { fontSize: PORTRAIT ? '12px' : '14px', color: '#ffffff', lineSpacing: PORTRAIT ? 3 : 6 };
+    const style = { fontSize: PORTRAIT ? '12px' : '14px', color: '#ffffff', lineSpacing: PORTRAIT ? 1 : 6 };
     if (PORTRAIT) box.add(this.add.text(16, listTop + 18, lines.join('\n'), style));
     else {
       const half = Math.ceil(lines.length / 2);
       box.add(this.add.text(24, listTop + 18, lines.slice(0, half).join('\n'), style));
       box.add(this.add.text(WIDTH / 2 + 4, listTop + 18, lines.slice(half).join('\n'), style));
     }
-    box.add(this.add.text(WIDTH / 2, HEIGHT - 26, TOUCH ? 'Tap here to close' : 'Click here or press R to close',
+    if (SaveCode.available()) this.setupSaveCode(box, HEIGHT - (PORTRAIT ? 56 : 78));
+    box.add(this.add.text(WIDTH / 2, HEIGHT - 22, TOUCH ? 'Tap here to close' : 'Click here or press R to close',
       { fontSize: '18px', color: '#ffff66' }).setOrigin(0.5).setInteractive({ useHandCursor: true }).on('pointerdown', () => toggle()));
 
     const toggle = () => { box.setVisible(!box.visible); this.showSkinChoice(); };
@@ -400,6 +403,34 @@ class StartScene extends Phaser.Scene {
       .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerdown', toggle);
     this.input.keyboard.on('keydown-R', toggle);
     this.showSkinChoice();
+  }
+
+  // Save codes (save.js): show your code, or buttons to get one or load one.
+  setupSaveCode(box, y) {
+    const button = (label, color, onClick) => this.add.text(0, y, label, { fontSize: PORTRAIT ? '14px' : '16px', color: '#111111', backgroundColor: color, padding: { x: 8, y: 5 } })
+      .setOrigin(0, 0.5).setInteractive({ useHandCursor: true }).on('pointerdown', onClick);
+    const status = this.add.text(WIDTH / 2, y + 20, '', { fontSize: '13px', color: '#aaaaaa', align: 'center', wordWrap: { width: WIDTH - 20 } }).setOrigin(0.5, 0);
+    const code = SaveCode.code();
+    const loadCode = () => {
+      const typed = window.prompt('Type your save code (like K7Q4-M2XP).\nThis replaces the progress on this device.');
+      if (!typed) return;
+      status.setText('Loading...');
+      SaveCode.load(typed).catch(e => status.setText(e.message).setColor('#ff6666'));
+    };
+    const parts = code
+      ? [this.add.text(0, y, '💾 Your save code: ' + code, { fontSize: PORTRAIT ? '14px' : '17px', color: '#7cfc00' }).setOrigin(0, 0.5),
+         button('Load another', '#cccccc', loadCode)]
+      : [button('💾 Get a save code', '#7cfc00', () => {
+          status.setText('Making your code...');
+          SaveCode.create().then(() => this.scene.restart({ openRewards: true }))
+            .catch(e => status.setText(e.message).setColor('#ff6666'));
+        }), button('I have a code', '#cccccc', loadCode)];
+    if (PORTRAIT) status.setVisible(false); // no room on a phone
+    if (!code) status.setText('Play on another device with the same progress. No name or email needed.');
+    else status.setText('Type this code on another device to play with the same progress there.');
+    let x = WIDTH / 2 - (parts.reduce((total, part) => total + part.width, 0) + 10 * (parts.length - 1)) / 2;
+    parts.forEach(part => { part.x = x; x += part.width + 10; });
+    box.add([...parts, status]);
   }
 
   // The daily login prize: a row of 7 days, today's lit up, and what you won.
