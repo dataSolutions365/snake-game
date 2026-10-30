@@ -19,6 +19,13 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Only the owner's Google account can read stats and errors.
+    // Put your own email here.
+    function isOwner() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email == 'YOUR-EMAIL@gmail.com';
+    }
     // A score must be 3 capital letters and a sensible number.
     function validScore() {
       return request.resource.data.keys().hasOnly(['name', 'score', 'createdAt'])
@@ -49,14 +56,14 @@ service cloud.firestore {
     }
     // Usage counts for stats.html: one record per day, only these numbers.
     match /stats/{day} {
-      allow read: if true;
+      allow read: if isOwner();
       allow create, update: if day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
         && request.resource.data.keys().hasOnly(['visits', 'phone_visits', 'computer_visits', 'games', 'rooms',
              'games_easy', 'games_easy_snakes', 'games_medium', 'games_medium_snakes', 'games_twoplayer', 'games_online']);
     }
     // Errors from the game (errors.js), listed at the bottom of stats.html.
     match /errors/{id} {
-      allow read: if true;
+      allow read: if isOwner();
       allow create: if request.resource.data.keys().hasOnly(['message', 'stack', 'where', 'version', 'device', 'at'])
         && request.resource.data.message is string && request.resource.data.message.size() <= 500
         && request.resource.data.stack is string && request.resource.data.stack.size() <= 1500
@@ -103,6 +110,12 @@ Do this step **before** step 4, so the config you copy includes the database add
 4. You'll see a code block containing `const firebaseConfig = { ... }`. Copy just that part and paste it in the chat thread.
 
 The firebaseConfig is safe to share. It's designed to be public, and the rules in step 3 are what protect the database.
+
+## 5. Sign-in for stats.html
+stats.html (and the Owner area on datasolutions365.com) sign in with Google.
+1. **Build → Authentication** → **Get started** → **Sign-in method** → **Google** → **Enable** → **Save**.
+2. **Settings** tab → **Authorized domains** → add `snake.datasolutions365.com`, `datasolutions365.com` and `www.datasolutions365.com`.
+3. Make sure the `isOwner` rule in step 3 has your Google email in it.
 
 ## Removing a bad score later
 Firestore Database → **Data** tab → `scores_easy`, `scores_easy_snakes`, `scores_medium` or `scores_medium_snakes` → click the entry → the ⋮ menu → **Delete document**.
