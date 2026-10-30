@@ -2326,3 +2326,11 @@ const phaserGame = new Phaser.Game({
   scene: [StartScene, GameScene, GameOverScene, OnlineMenuScene]
 });
 setupOnlineEvents(phaserGame);
+
+// If anything in the game breaks, Phaser would stop drawing and the screen
+// would freeze. This catches the error instead: it's saved and the player
+// gets a "Start again" button (see errors.js), and the game keeps going.
+const phaserStep = phaserGame.step.bind(phaserGame);
+phaserGame.step = (time, delta) => {
+  try { phaserStep(time, delta); } catch (e) { reportError(e); }
+};

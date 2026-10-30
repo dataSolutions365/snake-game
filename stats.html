@@ -49,6 +49,10 @@
 
     <h2>Every day</h2>
     <div class="table-wrap"><table id="table"></table></div>
+
+    <h2>Recent errors</h2>
+    <p class="note">When something breaks in the game, it shows up here (newest first). Send these to Claude to fix.</p>
+    <div id="errors"></div>
   </div>
 </main>
 
@@ -98,7 +102,23 @@
     if (!days.length) el('table').innerHTML += '<tr><td colspan="12">No games yet.</td></tr>';
   }
 
-  load().catch(e => {
+  // The 20 newest errors (see errors.js). Shown as plain text, since
+  // anyone's browser can write to this list.
+  async function loadErrors() {
+    const snap = await firebase.firestore().collection('errors').orderBy('at', 'desc').limit(20).get();
+    const list = el('errors');
+    if (snap.empty) { list.textContent = 'No errors. 🎉'; return; }
+    snap.docs.forEach(doc => {
+      const e = doc.data();
+      const box = document.createElement('pre');
+      box.style.cssText = 'white-space: pre-wrap; background: #222; padding: 10px; border-radius: 6px; font-size: 12px; text-align: left;';
+      box.textContent = [(e.at ? e.at.toDate().toLocaleString() : '') + '   v' + e.version + '   ' + e.where,
+        e.message, e.stack, e.device].join('\n');
+      list.append(box);
+    });
+  }
+
+  load().then(() => { if (!document.body.classList.contains('embed')) return loadErrors(); }).catch(e => {
     el('error').textContent = 'Couldn\'t load the stats. If you just set this up, check the Firestore rules (FIREBASE_SETUP.md, step 3). ' + e.message;
   });
 </script>

@@ -54,6 +54,16 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['visits', 'phone_visits', 'computer_visits', 'games', 'rooms',
              'games_easy', 'games_easy_snakes', 'games_medium', 'games_medium_snakes', 'games_twoplayer', 'games_online']);
     }
+    // Errors from the game (errors.js), listed at the bottom of stats.html.
+    match /errors/{id} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasOnly(['message', 'stack', 'where', 'version', 'device', 'at'])
+        && request.resource.data.message is string && request.resource.data.message.size() <= 500
+        && request.resource.data.stack is string && request.resource.data.stack.size() <= 1500
+        && request.resource.data.where is string && request.resource.data.where.size() <= 200
+        && request.resource.data.device is string && request.resource.data.device.size() <= 300
+        && request.resource.data.version is int;
+    }
   }
 }
 ```
