@@ -81,6 +81,16 @@ const POWER_UPS = {
   dark:   { icon: '🙈', good: false, says: 'LIGHTS OUT!', about: 'You only see right around you' },
   // good: null means it could be either. It turns into one of the others at random.
   mystery: { icon: '❓', good: null, says: '?',          about: 'Surprise! Good or bad?' },
+  // Online extras: these only show up in online games (some of them
+  // mess with the other players).
+  rocket:  { icon: '🚀', good: true, says: 'BLAST OFF!',     about: 'Zoom and fly over snakes, 3 sec', onlineOnly: true },
+  goal:    { icon: '🏈', good: true, says: 'FIELD GOAL! +3', about: '+3 points', onlineOnly: true },
+  pizza:   { icon: '🍕', good: true, says: 'PIZZA! +5',      about: 'Grow 5 longer, +5 points', onlineOnly: true },
+  crown:   { icon: '👑', good: true, says: 'KING! x2',       about: 'Double points for 10 sec', onlineOnly: true },
+  magnet:  { icon: '🧲', good: true, says: 'MAGNET!',        about: 'Pulls nearby apples to you', onlineOnly: true },
+  rainbow: { icon: '🌈', good: true, says: 'RAINBOW!',       about: 'Turn rainbow for 10 sec', onlineOnly: true },
+  ice:     { icon: '🧊', good: true, says: 'FREEZE THEM!',   about: 'Everyone else freezes, 2 sec', onlineOnly: true },
+  poop:    { icon: '💩', good: true, says: 'STINKY!',        about: 'Everyone else goes slow, 4 sec', onlineOnly: true },
 };
 const POWER_UP_EVERY = 5000;     // milliseconds between new power-ups (on each screen)
 const POWER_UP_LASTS = 10000;    // milliseconds before an uneaten one disappears (it blinks first)
@@ -504,11 +514,12 @@ class StartScene extends Phaser.Scene {
       '🪨  Rocks: longer than the number?',
       '    Smash through (-' + ROCK_SMASH_COSTS + '). If not: crash'];
     const ups = ['POWER-UPS'];
-    Object.values(POWER_UPS).filter(pu => pu.good === true).forEach(pu => ups.push(pu.icon + '  ' + pu.about));
+    Object.values(POWER_UPS).filter(pu => pu.good === true && !pu.onlineOnly).forEach(pu => ups.push(pu.icon + '  ' + pu.about));
     const downs = ['POWER DOWNS'];
     Object.values(POWER_UPS).filter(pu => pu.good === false).forEach(pu => downs.push(pu.icon + '  ' + pu.about));
     const extras = [];
     Object.values(POWER_UPS).filter(pu => pu.good === null).forEach(pu => extras.push(pu.icon + '  ' + pu.about));
+    extras.push('🌐  Online extras: ' + Object.values(POWER_UPS).filter(pu => pu.onlineOnly).map(pu => pu.icon).join(' '));
     extras.push('🧩  Mazes: find orange on the map.', '    In green, out red: +' + MAZE_PRIZE + '!', '    Hit a wall: crash.',
       '', 'All but ⭐ and 💀 last ' + EFFECT_LASTS / 1000 + ' seconds.');
 
@@ -923,7 +934,7 @@ class GameScene extends Phaser.Scene {
     this.clock += MOVE_EVERY / 2;
     const fullStep = this.clock % MOVE_EVERY === 0;
     const slowStep = this.clock % (MOVE_EVERY * 2) === 0;
-    const alive = this.players.filter(p => !p.crashed
+    const alive = this.players.filter(p => !p.crashed && !this.has(p, 'ice') // 🧊 frozen: no moving
       && (this.has(p, 'speed') || (this.has(p, 'slow') ? slowStep : fullStep)));
     if (alive.length === 0 && !fullStep) return; // nobody moves this tick
 
@@ -1135,6 +1146,19 @@ class GameScene extends Phaser.Scene {
 
   // What each power-up does.
   usePowerUp(p, kind) {
+    // The online extras (see POWER_UPS).
+    const others = this.players.filter(o => o !== p && !o.crashed);
+    const extras = {
+      rocket: () => { p.until.speed = p.until.ghost = this.clock + 3000; delete p.until.slow; },
+      goal: () => { p.score += 3; },
+      pizza: () => { p.grow += 5; p.score += 5; },
+      crown: () => { p.until.double = this.clock + 10000; },
+      magnet: () => { p.until.magnet = this.clock + ITEM_LASTS.magnet; },
+      rainbow: () => { p.until.rainbow = this.clock + 10000; },
+      ice: () => others.forEach(o => { o.until.ice = this.clock + 2000; }),
+      poop: () => others.forEach(o => { o.until.slow = this.clock + 4000; delete o.until.speed; }),
+    };
+    if (extras[kind]) { extras[kind](); return; }
     if (kind === 'grow') {
       p.grow += POWER_UP_SIZE;   // grows over the next few steps
       p.score += POWER_UP_SIZE;
@@ -1154,7 +1178,7 @@ class GameScene extends Phaser.Scene {
 
   // The power-ups that can show up in this mode.
   powerUpKinds() {
-    return Object.keys(POWER_UPS).filter(kind => !POWER_UPS[kind].rocksOnly || this.mode.rocks);
+    return Object.keys(POWER_UPS).filter(kind => (!POWER_UPS[kind].rocksOnly || this.mode.rocks) && (!POWER_UPS[kind].onlineOnly || this.mode.online));
   }
 
   // Old power-ups disappear; now and then a new one shows up.
@@ -1257,7 +1281,9 @@ class GameScene extends Phaser.Scene {
     // (Online, a player who's out has already turned into leftovers.)
     const flash = Math.floor(this.clock / MOVE_EVERY) % 2 === 0;
     this.players.filter(p => !(this.online && p.crashed)).forEach(p => {
-      const colors = SKIN_COLORS[p.skin] || p.color;
+      const frozen = this.has(p, 'ice'); // 🧊 icy blue while frozen
+      const colors = frozen ? { body: 0xa8e6ff, head: 0xe3f8ff } : SKIN_COLORS[p.skin] || p.color;
+      const skin = this.has(p, 'rainbow') ? 'rainbow' : p.skin; // 🌈 for a while
       let head = colors.head;
       if (flash && this.has(p, 'speed')) head = 0xffffff;
       if (flash && (this.has(p, 'slow') || this.has(p, 'flip'))) head = 0xff4444;
@@ -1265,8 +1291,8 @@ class GameScene extends Phaser.Scene {
       p.points = this.smoothBody(p);
       // A dinosaur has a second body down one side (drawn first, so it's underneath).
       const side = this.fatCells(p).map((part, i) => ({ x: p.points[i].x + part.x - p.body[i].x, y: p.points[i].y + part.y - p.body[i].y }));
-      if (side.length) this.drawSnake(side, p.direction, colors.body, colors.body, alpha, false, p.skin);
-      this.drawSnake(p.points, p.direction, colors.body, head, alpha, true, p.skin);
+      if (side.length) this.drawSnake(side, p.direction, colors.body, colors.body, alpha, false, skin);
+      this.drawSnake(p.points, p.direction, colors.body, head, alpha, true, skin);
       // 🛡️ A blue bubble around the head while you have a shield.
       if (p.shield && p.points.length) {
         this.graphics.lineStyle(3, 0x66ccff, 0.6 + 0.3 * Math.sin(this.time.now / 150));

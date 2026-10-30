@@ -35,7 +35,7 @@
 
 const MAX_PLAYERS = 4;
 const CODE_LETTERS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O or 1/I/L, they look alike
-const QUICK_CHAT = ['Good game!', 'Rematch?', 'Nice move!', 'Oops!', 'Hi!', 'Ready!', '😂', '😎', '👍', '🐍'];
+const QUICK_CHAT = ['Good game!', 'Rematch?', 'Nice move!', 'Oops!', 'Hi!', 'Ready!', '😂', '😎', '👍', '🐍', '🚀', '💩', '🏈', '🔥', '😭', '🎉'];
 const MAX_CHAT_LENGTH = 80;
 // Typed chat: false means players can only use the QUICK_CHAT buttons above.
 // Change it to true to bring back the box for typing your own messages.
