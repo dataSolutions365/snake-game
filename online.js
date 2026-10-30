@@ -21,7 +21,7 @@
 //    rooms/ABCDE/
 //      host:     the host's player id
 //      status:   'lobby', 'playing' or 'over'
-//      players/  { id: { name, color } } for everyone in the room
+//      players/  { id: { name, color, skin } } for everyone in the room
 //      inputs/   { id: "x,y" } the way each player last asked to turn
 //      state/    the snakes and food, written by the host every step
 //      result/   who won, written by the host at the end
@@ -115,7 +115,7 @@ async function createRoom(name, color) {
     host: MY_ID,
     status: 'lobby',
     createdAt: firebase.database.ServerValue.TIMESTAMP,
-    players: { [MY_ID]: { name, color, joinedAt: firebase.database.ServerValue.TIMESTAMP } },
+    players: { [MY_ID]: { name, color, skin: Rewards.skin(), joinedAt: firebase.database.ServerValue.TIMESTAMP } },
   });
   // If the host closes the tab, the whole room goes away.
   room.onDisconnect().remove();
@@ -132,7 +132,7 @@ async function joinRoom(code, name, color) {
   if (data.status === 'playing') throw new Error('That room is in the middle of a game. Try again in a minute.');
   if (Object.keys(data.players || {}).length >= MAX_PLAYERS) throw new Error('That room is full (' + MAX_PLAYERS + ' players).');
   const me = room.child('players/' + MY_ID);
-  await me.set({ name, color, joinedAt: firebase.database.ServerValue.TIMESTAMP });
+  await me.set({ name, color, skin: Rewards.skin(), joinedAt: firebase.database.ServerValue.TIMESTAMP });
   // If this tab closes, take this player out of the room.
   me.onDisconnect().remove();
   enterRoom(code, false);

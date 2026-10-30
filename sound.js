@@ -10,7 +10,7 @@
 //    4. MUSIC        a looping jungle beat
 //    5. ON / OFF     the switches, remembered in the browser
 //
-//  game.js uses it like this:  Sound.play('eat')
+//  game.js uses it like this:  Sound.play('eat')  (or Sound.play('combo', 3))
 // =====================================================================
 
 
@@ -115,6 +115,9 @@ const SOUNDS = {
   mazeAppears: () => notes([880, 1175, 1568], 0.12, 'sine', 0.25),
   gameOver: () => notes([392, 330, 262, 196], 0.18, 'triangle', 0.3),
   click:   () => tone(700, 0.04, 'square', 0.1),
+  // A combo goes higher the bigger it gets (n is the combo number).
+  combo:   n => notes([0, 4, 7].map(step => 523 * Math.pow(2, (step + Math.min(n, 10) * 2) / 12)), 0.05, 'square', 0.12),
+  unlock:  () => notes([784, 988, 1175, 1568], 0.09, 'triangle', 0.3),
 };
 
 
@@ -180,9 +183,9 @@ function setSwitch(name, on) {
 // =====================================================================
 
 const Sound = {
-  play(name) {
+  play(name, value) {
     if (!audio || !soundOn() || !SOUNDS[name]) return;
-    try { SOUNDS[name](); } catch (e) { }
+    try { SOUNDS[name](value); } catch (e) { }
   },
   soundOn, musicOn,
   toggleSound: () => setSwitch('snakeSound', !soundOn()),
