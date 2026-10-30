@@ -190,8 +190,24 @@ function makeButton(scene, x, y, label, color, onClick, width = 280, fontSize = 
   const button = scene.add.text(x, y, label, {
     fontSize, color: '#111111', backgroundColor: color, padding: { x: 18, y: 10 }, align: 'center', fixedWidth: width,
   }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-  button.on('pointerdown', onClick);
+  button.on('pointerdown', () => { Sound.play('click'); onClick(); });
   return button;
+}
+
+// Two small buttons to switch sound effects and music on and off (sound.js).
+// place: what to do with each button (in the game, it goes on the HUD).
+function addSoundButtons(scene, x, y, place = button => button) {
+  const style = { fontSize: '16px', color: '#ffffff', backgroundColor: '#000000aa', padding: { x: 8, y: 5 } };
+  const sound = place(scene.add.text(x, y, '', style).setInteractive({ useHandCursor: true }));
+  const music = place(scene.add.text(x, y, '', style).setInteractive({ useHandCursor: true }));
+  const show = () => {
+    sound.setText(Sound.soundOn() ? '🔊 Sound' : '🔇 Sound');
+    music.setText(Sound.musicOn() ? '🎵 Music' : '🎵 Off');
+    music.x = sound.x + sound.width + 8;
+  };
+  sound.on('pointerdown', () => { Sound.toggleSound(); show(); });
+  music.on('pointerdown', () => { Sound.toggleMusic(); show(); });
+  show();
 }
 
 
@@ -236,6 +252,7 @@ class StartScene extends Phaser.Scene {
 
     this.setupColorPicker(HEIGHT / 2 - 35);
     this.setupLegend();
+    addSoundButtons(this, 10, 54);
     if (!TOUCH) this.setupControlsPicker();
 
     // Leaderboard button in the top-right corner (once Firebase is set up). Keyboard: L
@@ -524,6 +541,7 @@ class GameScene extends Phaser.Scene {
     // Score, shown in the top-left corner.
     this.scoreText = this.onHud(this.add.text(10, 10, '', { fontSize: '20px', color: '#ffffff', stroke: '#000000', strokeThickness: 4 }));
     this.updateScoreText();
+    addSoundButtons(this, 10, HEIGHT - 36, button => this.onHud(button));
 
     this.setupControls();
 
@@ -907,6 +925,12 @@ class GameScene extends Phaser.Scene {
       const bursts = { eat: [0xff5252, 8], crash: [0xffaa00, 26], gulp: [0xffffff, 30], smash: [0x9e9e9e, 16], maze: [0xffd700, 40] };
       const [color, count] = bursts[pop.kind] || [POWER_UPS[pop.kind] && POWER_UPS[pop.kind].good === false ? 0xff4444 : 0x7cfc00, 18];
       this.burst(pop.x, pop.y, color, count);
+      // A sound too, if it happened on the screen you're looking at.
+      const here = this.screenOf(pop);
+      if (this.screenShown === null || this.screenShown === here.sx + ',' + here.sy) {
+        const kind = POWER_UPS[pop.kind] ? (POWER_UPS[pop.kind].good === false ? 'powerdown' : 'powerup') : pop.kind;
+        Sound.play(kind);
+      }
       const extras = {
         maze: { says: 'MAZE BEATEN! +' + MAZE_PRIZE, good: true },
         gulp: { says: 'GULP!', good: true },
@@ -1540,7 +1564,10 @@ GameScene.prototype.setMaze = function (maze) {
     this.players.forEach(p => { p.inMazeFrom = null; });
   }
   if (this.online && this.online.isHost) Online.sendMaze(maze);
-  if (isNew) this.showMessage('🧩 A maze appeared! Look for orange on the map');
+  if (isNew) {
+    this.showMessage('🧩 A maze appeared! Look for orange on the map');
+    Sound.play('mazeAppears');
+  }
 };
 
 // Did this player go in one gap and out the other?
@@ -1973,6 +2000,8 @@ class GameOverScene extends Phaser.Scene {
   // { score, best, newBest } for one player or { winner, winnerColor, scores } for two.
   create(data) {
     addBackdrop(this); // see 3n
+    Sound.play('gameOver');
+    addSoundButtons(this, 10, HEIGHT - 36);
     this.add.text(WIDTH / 2, HEIGHT / 2 - 120, 'GAME OVER', { fontSize: '52px', color: '#ff4444' }).setOrigin(0.5);
     this.add.text(WIDTH / 2, HEIGHT / 2 - 65, MODES[data.mode].name + ' mode', { fontSize: '18px', color: '#aaaaaa' }).setOrigin(0.5);
 
