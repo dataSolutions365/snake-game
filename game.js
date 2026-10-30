@@ -303,6 +303,7 @@ class StartScene extends Phaser.Scene {
     this.setupRewards();
     if (data.openRewards) { this.rewards.setVisible(true); this.showSkinChoice(); }
     addSoundButtons(this, 10, 54);
+    if (TestMode.on()) this.setupTestBar(); // see 3p
     if (!TOUCH) this.setupControlsPicker();
 
     // Leaderboard button in the top-right corner (once Firebase is set up). Keyboard: L
@@ -814,6 +815,7 @@ class GameScene extends Phaser.Scene {
     if (!this.online) this.toast(Rewards.startGame(this.modeKey));
     this.frozenUntil = 0;
     if (!this.online && this.players.length === 1) this.setupItemBar(); // see 3o
+    if (TestMode.on() && this.players.length === 1) this.setupTestPanel(); // see 3p
     this.events.once('shutdown', () => Rewards.endGame());
 
     if (!this.online || this.online.isHost) {
@@ -1391,7 +1393,7 @@ class GameScene extends Phaser.Scene {
       result.score = score;
       result.newBest = score > best;
       result.best = Math.max(best, score);
-      if (result.newBest) saveHighScore(this.modeKey, score);
+      if (result.newBest && !TestMode.on()) saveHighScore(this.modeKey, score); // test mode doesn't count
     } else {
       // Two players: whoever didn't crash wins. If both crashed, it's a draw.
       const survivors = this.players.filter(p => !p.crashed);
@@ -2196,6 +2198,74 @@ GameScene.prototype.afterItems = function (p) {
 GameScene.prototype.skinPower = function (p) {
   p.power = p.skin;
   if (p.power === 'lava' || p.power === 'diamond') p.shield = true; // 🔥💎 start with a shield
+};
+
+// =====================================================================
+//  3p. TEST MODE (see testmode.js)
+//  For the owner: try out any power-up, and see the daily prize box.
+// =====================================================================
+
+// Start screen: a "🧪 TEST MODE" button to leave it, and one that shows
+// the daily prize box (a different day each press).
+StartScene.prototype.setupTestBar = function () {
+  const style = color => ({ fontSize: '15px', color: '#111111', backgroundColor: color, padding: { x: 8, y: 5 } });
+  const leave = this.add.text(0, HEIGHT - 52, PORTRAIT ? '🧪 Leave test mode' : '🧪 TEST MODE: leave', style('#ff66cc')).setOrigin(0, 0.5)
+    .setInteractive({ useHandCursor: true }).on('pointerdown', () => TestMode.stop());
+  let day = 0;
+  const prize = this.add.text(0, HEIGHT - 52, PORTRAIT ? '🎁 Daily prize' : '🎁 Show a daily prize', style('#ffd700')).setOrigin(0, 0.5)
+    .setInteractive({ useHandCursor: true }).on('pointerdown', () => {
+      if (this.loginBox || this.rewards.visible) return;
+      day = day % 7 + 1;
+      const items = Rewards.LOGIN_PRIZES[day - 1];
+      this.showLoginPrize({ day, prize: day === 7 ? 'GRAND PRIZE! 2 of every item + the Diamond skin'
+        : items.map(key => Rewards.ITEMS[key].icon + ' ' + Rewards.ITEMS[key].name).join(' + ') });
+    });
+  leave.x = WIDTH / 2 - (leave.width + prize.width + 10) / 2;
+  prize.x = leave.x + leave.width + 10;
+};
+
+// In a game: 🧪 in the top-right corner (or T) pauses and shows every
+// power-up. Pick one and it lands a few squares in front of your snake.
+GameScene.prototype.setupTestPanel = function () {
+  const kinds = Object.keys(POWER_UPS);
+  const perRow = PORTRAIT ? 5 : 10, size = 52;
+  const rows = Math.ceil(kinds.length / perRow);
+  const panel = this.onHud(this.add.container(0, 0).setDepth(25).setVisible(false));
+  const top = HEIGHT / 2 - (rows * size) / 2;
+  panel.add(this.add.rectangle(0, 0, WIDTH, HEIGHT, 0x000000, 0.85).setOrigin(0).setInteractive());
+  panel.add(this.add.text(WIDTH / 2, top - 50, '🧪 Pick a power-up to try', { fontSize: '22px', color: '#ff66cc' }).setOrigin(0.5));
+  kinds.forEach((kind, i) => {
+    const x = WIDTH / 2 + ((i % perRow) - (perRow - 1) / 2) * size;
+    const y = top + Math.floor(i / perRow) * size + size / 2;
+    const back = this.add.rectangle(x, y, size - 6, size - 6, POWER_UPS[kind].good === false ? 0x5a1f1f : 0x1f4a1f)
+      .setInteractive({ useHandCursor: true }).on('pointerdown', (pointer, lx, ly, event) => {
+        event.stopPropagation();
+        this.dropPowerUp(kind);
+        toggle();
+      });
+    panel.add([back, this.add.text(x, y, POWER_UPS[kind].icon, { fontSize: '26px' }).setOrigin(0.5)]);
+  });
+  panel.add(this.add.text(WIDTH / 2, top + rows * size + 30, (TOUCH ? 'Tap' : 'Click') + ' here to go back', { fontSize: '18px', color: '#ffff66' })
+    .setOrigin(0.5).setInteractive({ useHandCursor: true }).on('pointerdown', (pointer, lx, ly, event) => { event.stopPropagation(); toggle(); }));
+  const toggle = () => {
+    if (!this.timer || this.me.crashed) return;
+    panel.setVisible(!panel.visible);
+    this.timer.paused = panel.visible;
+    this.swipeStart = null; // a tap here isn't a swipe
+  };
+  this.onHud(this.add.text(WIDTH - 10, 10, '🧪', { fontSize: '22px', backgroundColor: '#ff66cc', padding: { x: 6, y: 3 } })
+    .setOrigin(1, 0).setDepth(24).setInteractive({ useHandCursor: true })
+    .on('pointerdown', (pointer, lx, ly, event) => { event.stopPropagation(); toggle(); }));
+  this.input.keyboard.on('keydown-T', toggle);
+};
+
+// A power-up on the first free square 3 to 6 squares ahead of you
+// (or anywhere free if that's all blocked).
+GameScene.prototype.dropPowerUp = function (kind) {
+  const head = this.me.body[0], d = this.me.direction;
+  const ahead = [3, 4, 5, 6].map(n => ({ x: head.x + d.x * n, y: head.y + d.y * n }))
+    .find(spot => spot.x >= 0 && spot.y >= 0 && spot.x < this.cols && spot.y < this.rows && !this.hitsWall(spot) && !this.isTaken(spot));
+  this.powerUps.push({ ...(ahead || this.freeSpot()), kind, until: this.clock + POWER_UP_LASTS * 3 });
 };
 
 // 🧲 Every step, apples close to a magnet snake slide one square toward it.

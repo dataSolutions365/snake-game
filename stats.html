@@ -148,7 +148,14 @@
     out.textContent = 'Sign out';
     out.onclick = () => auth.signOut();
     el('who').append(out);
-    load().then(() => { if (!document.body.classList.contains('embed')) return loadErrors(); }).catch(e => {
+    load().then(() => {
+      // Only the owner gets this far: the button to try the game in test mode (see testmode.js).
+      const test = document.createElement('button');
+      test.textContent = '🧪 Play in test mode';
+      test.onclick = () => { localStorage.setItem('snakeTestMode', '1'); location.href = './'; };
+      el('who').append(test);
+      if (!document.body.classList.contains('embed')) return loadErrors();
+    }).catch(e => {
       el('error').textContent = e.code === 'permission-denied'
         ? user.email + ' doesn\'t have access to these stats.'
         : 'Couldn\'t load the stats. If you just set this up, check the Firestore rules (FIREBASE_SETUP.md, step 3). ' + e.message;
