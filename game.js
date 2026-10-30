@@ -8,6 +8,7 @@
 //    3. THE GAME        the snake, food, controls, score and computer snakes
 //       (3i covers online games; the rest of online play is in online.js)
 //       (3j covers the big world, the cameras, spin and lights out)
+//       (3k mazes, 3l rocks, 3m snakes eating snakes, 3n how everything looks)
 //    4. GAME OVER       the screen after you crash
 //    5. START PHASER    joins the screens together and starts it all
 // =====================================================================
@@ -224,7 +225,8 @@ class StartScene extends Phaser.Scene {
       return;
     }
 
-    this.add.text(WIDTH / 2, HEIGHT / 2 - 225, 'SNAKE', { fontSize: '64px', color: '#7cfc00' }).setOrigin(0.5);
+    addBackdrop(this); // see 3n
+    this.add.text(WIDTH / 2, HEIGHT / 2 - 225, 'SNAKE', { fontSize: '64px', color: '#7cfc00', stroke: '#1b5e20', strokeThickness: 8 }).setOrigin(0.5);
 
     // On a phone: "Swipe to steer". On a computer, that line is the
     // arrow keys / mouse picker instead (see setupControlsPicker).
@@ -495,6 +497,8 @@ class GameScene extends Phaser.Scene {
     // A Graphics object is like a blank canvas we can draw shapes on.
     // The board and snakes go on this one; the cameras (see 3j) decide
     // which part of it you see.
+    this.field = this.add.image(0, 0, makeField(this, this.cols, this.rows)).setOrigin(0).setDepth(-10); // the grass (see 3n)
+    makeSpark(this);
     this.graphics = this.add.graphics();
     this.fog = this.add.graphics().setDepth(5); // for lights out
     this.setupCameras();
@@ -518,7 +522,7 @@ class GameScene extends Phaser.Scene {
     if (!this.online) this.me = this.players[0];
 
     // Score, shown in the top-left corner.
-    this.scoreText = this.onHud(this.add.text(10, 10, '', { fontSize: '20px', color: '#ffffff' }));
+    this.scoreText = this.onHud(this.add.text(10, 10, '', { fontSize: '20px', color: '#ffffff', stroke: '#000000', strokeThickness: 4 }));
     this.updateScoreText();
 
     this.setupControls();
@@ -670,6 +674,10 @@ class GameScene extends Phaser.Scene {
         this.steerToMouse(player);
       }
     });
+
+    // Draw every frame (not just every step), so snakes glide smoothly
+    // from square to square (see 3n).
+    this.draw();
   }
 
   // Used by the keys and swipes.
@@ -744,8 +752,10 @@ class GameScene extends Phaser.Scene {
 
     // Moving = add a new head at the front, remove the last tail square.
     alive.filter(p => !p.crashed).forEach(p => {
+      this.noteMove(p, this.has(p, 'speed') ? MOVE_EVERY / 2 : this.has(p, 'slow') ? MOVE_EVERY * 2 : MOVE_EVERY); // see 3n
       p.body.unshift(p.newHead);
       if (this.eatFoodAt(p.newHead)) {
+        this.pops.push({ x: p.newHead.x, y: p.newHead.y, kind: 'eat' });
         // Ate the food! Skipping pop() leaves the tail where it was,
         // so the snake ends up one square longer.
         p.score += 1;
@@ -893,6 +903,10 @@ class GameScene extends Phaser.Scene {
   // "+3", "FAST!" or "-3" floats up from where a power-up was taken.
   showPops(pops) {
     pops.forEach(pop => {
+      // A burst of sparkles first (see 3n), then the words, if any.
+      const bursts = { eat: [0xff5252, 8], crash: [0xffaa00, 26], gulp: [0xffffff, 30], smash: [0x9e9e9e, 16], maze: [0xffd700, 40] };
+      const [color, count] = bursts[pop.kind] || [POWER_UPS[pop.kind] && POWER_UPS[pop.kind].good === false ? 0xff4444 : 0x7cfc00, 18];
+      this.burst(pop.x, pop.y, color, count);
       const extras = {
         maze: { says: 'MAZE BEATEN! +' + MAZE_PRIZE, good: true },
         gulp: { says: 'GULP!', good: true },
@@ -921,8 +935,9 @@ class GameScene extends Phaser.Scene {
     this.powerUps.forEach(pu => {
       const info = POWER_UPS[pu.kind];
       if (!info) return;
-      g.fillStyle(info.good === null ? 0xffff66 : info.good ? 0x7cfc00 : 0xff4444, 0.35); // yellow for a surprise
-      g.fillCircle(pu.x * CELL + CELL / 2, pu.y * CELL + CELL / 2, CELL * 0.75);
+      const pulse = 0.3 + 0.15 * Math.sin(this.time.now / 250 + pu.x);
+      g.fillStyle(info.good === null ? 0xffff66 : info.good ? 0x7cfc00 : 0xff4444, pulse); // yellow for a surprise
+      g.fillCircle(pu.x * CELL + CELL / 2, pu.y * CELL + CELL / 2, CELL * 0.8);
       const key = pu.x + ',' + pu.y + ',' + pu.kind;
       const icon = this.powerUpIcons[key] || this.inWorld(this.add.text(0, 0, info.icon, { fontSize: (CELL + 2) + 'px' }).setOrigin(0.5));
       delete this.powerUpIcons[key];
@@ -934,22 +949,25 @@ class GameScene extends Phaser.Scene {
     Object.values(this.powerUpIcons).forEach(icon => icon.destroy()); // ones that are gone
     this.powerUpIcons = icons;
 
-    // Food: red apples with a green leaf.
-    this.foods.forEach(food => {
-      g.fillStyle(0xff4444);
-      g.fillCircle(food.x * CELL + CELL / 2, food.y * CELL + CELL / 2 + 1, CELL * 0.42);
-      g.fillStyle(0x32cd32);
-      g.fillEllipse(food.x * CELL + CELL * 0.65, food.y * CELL + CELL * 0.15, CELL * 0.35, CELL * 0.2);
-    });
+    // Food: shiny red apples that bounce (see 3n).
+    this.foods.forEach(food => this.drawApple(food));
 
-    // Leftovers from crashed snakes: small dots in that snake's color.
+    // Leftovers from crashed snakes: glowing beads in that snake's color.
     this.leftovers.forEach(piece => {
+      const x = piece.x * CELL + CELL / 2, y = piece.y * CELL + CELL / 2;
+      g.fillStyle(0x000000, 0.25);
+      g.fillCircle(x + 2, y + 3, CELL * 0.3);
       g.fillStyle(piece.color);
-      g.fillCircle(piece.x * CELL + CELL / 2, piece.y * CELL + CELL / 2, CELL * 0.3);
+      g.fillCircle(x, y, CELL * 0.3);
+      g.fillStyle(0xffffff, 0.6);
+      g.fillCircle(x - CELL * 0.1, y - CELL * 0.1, CELL * 0.1);
     });
 
-    // Computer snakes: each in its own color, with a white head.
-    this.computerSnakes.filter(cs => cs.alive).forEach(cs => this.drawSnake(cs.body, cs.direction, cs.color, 0xffffff));
+    // Computer snakes: each in its own color, with a lighter head.
+    this.computerSnakes.filter(cs => cs.alive).forEach(cs => {
+      cs.points = this.smoothBody(cs);
+      this.drawSnake(cs.points, cs.direction, cs.color, Phaser.Display.Color.IntegerToColor(cs.color).lighten(20).color);
+    });
 
     // Players' snakes, in their colors. The head is a lighter shade.
     // While a power-up is working: sped up, the head flashes white;
@@ -961,10 +979,11 @@ class GameScene extends Phaser.Scene {
       if (flash && this.has(p, 'speed')) head = 0xffffff;
       if (flash && (this.has(p, 'slow') || this.has(p, 'flip'))) head = 0xff4444;
       const alpha = this.has(p, 'ghost') ? 0.4 : 1;
+      p.points = this.smoothBody(p);
       // A dinosaur has a second body down one side (drawn first, so it's underneath).
-      const side = this.fatCells(p).filter(part => !this.hitsWall(part));
+      const side = this.fatCells(p).map((part, i) => ({ x: p.points[i].x + part.x - p.body[i].x, y: p.points[i].y + part.y - p.body[i].y }));
       if (side.length) this.drawSnake(side, p.direction, p.color.body, p.color.body, alpha, false);
-      this.drawSnake(p.body, p.direction, p.color.body, head, alpha);
+      this.drawSnake(p.points, p.direction, p.color.body, head, alpha);
     });
 
     if (this.online) this.updateOutText(); // see 3i
@@ -974,59 +993,18 @@ class GameScene extends Phaser.Scene {
     this.drawMiniMap();
   }
 
-  // Draw one snake, cartoon style: a round body with spots that gets thinner
-  // toward the tail, and a head with eyes and a tongue that flicks out now and then.
-  // face: false leaves off the eyes and tongue (for a dinosaur's extra side).
-  drawSnake(body, direction, bodyColor, headColor, alpha = 1, face = true) {
-    const g = this.graphics, n = body.length;
-    if (!n) return;
-    const center = part => ({ x: part.x * CELL + CELL / 2, y: part.y * CELL + CELL / 2 });
-    const size = i => CELL * 0.8 * Math.min(1, (n - i) / 4 + 0.25); // the last 2 squares get thinner
-    const spots = Phaser.Display.Color.IntegerToColor(bodyColor).darken(25).color;
-
-    // Body, from the tail up: a circle on each square, joined by a thick line.
-    for (let i = n - 1; i >= 1; i--) {
-      const a = center(body[i]), b = center(body[i - 1]);
-      g.lineStyle(Math.min(size(i), size(i - 1)), bodyColor, alpha);
-      g.lineBetween(a.x, a.y, b.x, b.y);
-      g.fillStyle(bodyColor, alpha);
-      g.fillCircle(a.x, a.y, size(i) / 2);
-      if (i % 2 === 0) {
-        g.fillStyle(spots, alpha);
-        g.fillCircle(a.x, a.y, CELL * 0.12);
-      }
-    }
-
-    // Head: a bigger circle.
-    const h = center(body[0]);
-    g.fillStyle(headColor, alpha);
-    g.fillCircle(h.x, h.y, CELL * 0.5);
-    if (!face) return;
-
-    // Eyes: two white circles with black pupils, looking the way it's going.
-    const fx = direction.x, fy = direction.y;   // forward
-    const sx = -fy, sy = fx;                     // sideways
-    [-1, 1].forEach(s => {
-      const ex = h.x + fx * CELL * 0.12 + sx * s * CELL * 0.22, ey = h.y + fy * CELL * 0.12 + sy * s * CELL * 0.22;
-      g.fillStyle(0xffffff, alpha);
-      g.fillCircle(ex, ey, CELL * 0.16);
-      g.fillStyle(0x000000, alpha);
-      g.fillCircle(ex + fx * CELL * 0.06, ey + fy * CELL * 0.06, CELL * 0.08);
-    });
-
-    // Tongue: a red forked line, out for a moment every couple of seconds.
-    if (Math.floor(this.clock / 300) % 6 === 0) {
-      const tx = h.x + fx * CELL * 0.85, ty = h.y + fy * CELL * 0.85;
-      g.lineStyle(2, 0xff3355, alpha);
-      g.lineBetween(h.x + fx * CELL * 0.45, h.y + fy * CELL * 0.45, tx, ty);
-      g.lineBetween(tx, ty, tx + (fx + sx) * CELL * 0.15, ty + (fy + sy) * CELL * 0.15);
-      g.lineBetween(tx, ty, tx + (fx - sx) * CELL * 0.15, ty + (fy - sy) * CELL * 0.15);
-    }
+  // Draw one snake (see 3n for how it looks). points are where each part
+  // of its body is, in squares (they can be in between squares while it glides).
+  // face: false leaves off the head (for a dinosaur's extra side).
+  drawSnake(points, direction, bodyColor, headColor, alpha = 1, face = true) {
+    drawSnakeBody(this.graphics, points, direction, bodyColor, headColor, alpha, face, this.time.now);
   }
 
   // ----- 3g. Game over -----
   gameOver() {
     if (this.timer) this.timer.remove(); // stop everything moving
+    this.showPops(this.pops);
+    this.pops = [];
     this.cameras.main.shake(200, 0.01);
 
     // Online, the host tells everyone the result, and every screen
@@ -1149,6 +1127,7 @@ GameScene.prototype.moveComputerSnakes = function () {
     }
     if (other) this.swallow(cs, other);
 
+    this.noteMove(cs, MOVE_EVERY);
     cs.body.unshift(newHead);
     if (this.eatFoodAt(newHead)) { /* ate: keep the tail */ }
     else if (cs.grow > 0) cs.grow -= 1;
@@ -1163,6 +1142,7 @@ GameScene.prototype.moveComputerSnakes = function () {
 // (swallowed: true when another snake ate it, so there's nothing left behind.)
 GameScene.prototype.crashComputerSnake = function (cs, swallowed = false) {
   cs.alive = false;
+  if (!swallowed) this.pops.push({ x: cs.body[0].x, y: cs.body[0].y, kind: 'crash' });
   if (!swallowed) cs.body.forEach(part => this.leftovers.push({ x: part.x, y: part.y, color: cs.color }));
   this.time.delayedCall(RESPAWN_AFTER, () => {
     this.computerSnakes.splice(this.computerSnakes.indexOf(cs), 1);
@@ -1209,6 +1189,7 @@ GameScene.prototype.setupOnlinePlayers = function (info) {
 // heading toward the middle of the board.
 GameScene.prototype.respawnPlayers = function () {
   this.players.filter(p => p.crashed && this.clock >= p.respawnAt).forEach(p => {
+    p.prevBody = null; // don't glide in from where it crashed
     for (let tries = 0; tries < 200; tries++) {
       const head = this.freeSpot();
       const dir = head.x < this.cols / 2 ? { x: 1, y: 0 } : { x: -1, y: 0 };
@@ -1259,6 +1240,14 @@ GameScene.prototype.applyOnlineState = function (state) {
   state.players.forEach(sent => {
     const p = this.players.find(q => q.id === sent.id);
     if (!p) return;
+    // Remember where it was, so it can glide to where it is now (see 3n).
+    const now = this.time.now;
+    if (p.body.length && sent.body.length && (p.body[0].x !== sent.body[0].x || p.body[0].y !== sent.body[0].y)) {
+      p.prevBody = p.body;
+      p.movedAt = now;
+      p.moveDur = Phaser.Math.Clamp(now - (p.lastSentAt || now - MOVE_EVERY), 40, 300);
+      p.lastSentAt = now;
+    }
     p.body = sent.body;
     p.score = sent.score;
     p.crashed = sent.crashed;
@@ -1316,7 +1305,7 @@ GameScene.prototype.setupCameras = function () {
   const y = fits ? 0 : (HEIGHT - frameH * zoom) / 2 + 15;
   this.cameras.main.setViewport(x, y, frameW * zoom, frameH * zoom).setZoom(zoom);
   this.hudCamera = this.cameras.add(0, 0, WIDTH, HEIGHT);
-  this.hudCamera.ignore([this.graphics, this.fog]);
+  this.hudCamera.ignore([this.field, this.graphics, this.fog]);
   if (!fits) this.onHud(this.add.rectangle(x, y, frameW * zoom, frameH * zoom).setOrigin(0).setStrokeStyle(2, 0x666666));
   this.miniMap = this.onHud(this.add.graphics());
   this.screenShown = null;
@@ -1354,15 +1343,24 @@ GameScene.prototype.followMe = function () {
 // green line where you can go through to the next screen.
 GameScene.prototype.drawEdges = function () {
   const g = this.graphics, w = this.cols * CELL, h = this.rows * CELL;
-  g.fillStyle(0x888888);
-  g.fillRect(0, 0, w, 3);
-  g.fillRect(0, h - 3, w, 3);
-  g.fillRect(0, 0, 3, h);
-  g.fillRect(w - 3, 0, 3, h);
-  g.fillStyle(0x7cfc00, 0.25);
+  // The outside wall: a wooden fence.
+  g.fillStyle(0x5d3a1a);
+  g.fillRect(0, 0, w, 5);
+  g.fillRect(0, h - 5, w, 5);
+  g.fillRect(0, 0, 5, h);
+  g.fillRect(w - 5, 0, 5, h);
+  g.fillStyle(0x8b5a2b);
+  g.fillRect(0, 0, w, 2);
+  g.fillRect(0, h - 5, w, 2);
+  g.fillRect(0, 0, 2, h);
+  g.fillRect(w - 5, 0, 2, h);
+  // Ways through to the next screen: a dashed white line.
+  g.fillStyle(0xffffff, 0.35);
   for (let i = 1; i < this.screens; i++) {
-    g.fillRect(i * this.frameCols * CELL - 2, 0, 4, h);
-    g.fillRect(0, i * this.frameRows * CELL - 2, w, 4);
+    for (let d = 0; d < Math.max(w, h); d += 16) {
+      if (d < h) g.fillRect(i * this.frameCols * CELL - 1, d, 3, 8);
+      if (d < w) g.fillRect(d, i * this.frameRows * CELL - 1, 8, 3);
+    }
   }
 };
 
@@ -1574,10 +1572,9 @@ GameScene.prototype.drawMaze = function () {
   // Blink for the last 3 seconds before it goes.
   if (m.until - this.clock < 3000 && Math.floor(this.clock / 240) % 2) return;
   const g = this.graphics;
-  g.fillStyle(0xb5651d);
   m.walls.forEach(key => {
     const [x, y] = key.split(',').map(Number);
-    g.fillRect(x * CELL, y * CELL, CELL - 1, CELL - 1);
+    drawBrick(g, x, y);
   });
   // The entrance glows green and the exit red.
   g.fillStyle(0x7cfc00, 0.6);
@@ -1649,13 +1646,12 @@ GameScene.prototype.drawRocks = function () {
   const labels = [];
   this.rocks.forEach((power, key) => {
     const [x, y] = key.split(',').map(Number);
-    g.fillStyle(0x6e6e6e);
-    g.fillRoundedRect(x * CELL + 1, y * CELL + 1, CELL - 2, CELL - 2, 6);
+    drawStone(g, x, y, 0x8a8a8a);
     labels.push({ x, y, power });
   });
   // Every rock shows its power number.
   while (this.rockLabels.length < labels.length) {
-    this.rockLabels.push(this.inWorld(this.add.text(0, 0, '', { fontSize: '12px', fontStyle: 'bold', color: '#ffffff' }).setOrigin(0.5).setDepth(3)));
+    this.rockLabels.push(this.inWorld(this.add.text(0, 0, '', { fontSize: '12px', fontStyle: 'bold', color: '#ffffff', stroke: '#333333', strokeThickness: 3 }).setOrigin(0.5).setDepth(3)));
   }
   this.rockLabels.forEach((text, i) => {
     const rock = labels[i];
@@ -1698,6 +1694,7 @@ GameScene.prototype.swallow = function (eater, victim) {
 GameScene.prototype.knockOut = function (p, leaveFood) {
   if (p.crashed) return;
   p.crashed = true;
+  if (leaveFood && p.body.length) this.pops.push({ x: p.body[0].x, y: p.body[0].y, kind: 'crash' });
   if (!this.online) return;
   if (leaveFood) p.body.forEach(part => this.leftovers.push({ x: part.x, y: part.y, color: p.color.body }));
   p.score = Math.max(0, p.score - CRASH_COSTS);
@@ -1718,7 +1715,8 @@ GameScene.prototype.drawSizes = function () {
     const text = this.sizeLabels.get(key)
       || this.inWorld(this.add.text(0, 0, '', { fontSize: '12px', fontStyle: 'bold' }).setOrigin(0.5).setDepth(3));
     this.sizeLabels.delete(key);
-    const middle = body[Math.min(body.length - 1, Math.max(1, Math.floor(body.length / 2)))];
+    const points = key.points || body; // where it's drawn right now (see 3n)
+    const middle = points[Math.min(points.length - 1, Math.max(1, Math.floor(points.length / 2)))];
     this.graphics.fillStyle(badge);
     this.graphics.fillCircle((middle.x + 0.5) * CELL, (middle.y + 0.5) * CELL, CELL * 0.45);
     text.setText(String(body.length))
@@ -1729,6 +1727,203 @@ GameScene.prototype.drawSizes = function () {
   this.sizeLabels.forEach(text => text.destroy()); // snakes that are gone
   this.sizeLabels = labels;
 };
+
+
+// =====================================================================
+//  3n. THE LOOK
+//  How everything is drawn: the grass, gliding snakes with scales and
+//  shading, bouncing apples, stones, bricks and sparkle bursts.
+// =====================================================================
+
+// Remember where a snake was just before it moves, so it can glide.
+GameScene.prototype.noteMove = function (snake, duration) {
+  snake.prevBody = snake.body.map(part => ({ x: part.x, y: part.y }));
+  snake.movedAt = this.time.now;
+  snake.moveDur = duration;
+};
+
+// Where each part of a snake should be drawn right now: part of the way
+// from where it was to where it is, depending on how long ago it moved.
+GameScene.prototype.smoothBody = function (snake) {
+  const t = snake.prevBody ? Phaser.Math.Clamp((this.time.now - snake.movedAt) / snake.moveDur, 0, 1) : 1;
+  return snake.body.map((part, i) => {
+    const from = snake.prevBody && (snake.prevBody[i] || snake.prevBody[snake.prevBody.length - 1]);
+    if (!from || Math.abs(from.x - part.x) + Math.abs(from.y - part.y) > 1.5) return part; // jumped: don't glide
+    return { x: from.x + (part.x - from.x) * t, y: from.y + (part.y - from.y) * t };
+  });
+};
+
+// A burst of sparkles at a square.
+GameScene.prototype.burst = function (x, y, color, count) {
+  const sparks = this.inWorld(this.add.particles(0, 0, 'spark', {
+    speed: { min: 40, max: 180 }, lifespan: { min: 300, max: 700 }, scale: { start: 1, end: 0 },
+    tint: color, emitting: false,
+  }).setDepth(4));
+  sparks.explode(count, (x + 0.5) * CELL, (y + 0.5) * CELL);
+  this.time.delayedCall(900, () => sparks.destroy());
+};
+
+// An apple: shadow, red body that gently bounces, a shine, a stem and a leaf.
+GameScene.prototype.drawApple = function (food) {
+  const g = this.graphics;
+  const bounce = Math.sin(this.time.now / 180 + food.x * 1.3 + food.y) * 1.5;
+  const x = food.x * CELL + CELL / 2, y = food.y * CELL + CELL / 2 + bounce;
+  const r = CELL * 0.42;
+  g.fillStyle(0x000000, 0.25);
+  g.fillEllipse(food.x * CELL + CELL / 2 + 2, food.y * CELL + CELL * 0.85, r * 1.8, r * 0.7);
+  g.fillStyle(0xb71c1c);
+  g.fillCircle(x, y + 1, r);
+  g.fillStyle(0xe53935);
+  g.fillCircle(x - 1, y, r * 0.85);
+  g.fillStyle(0xffffff, 0.7);
+  g.fillCircle(x - r * 0.35, y - r * 0.35, r * 0.22);
+  g.lineStyle(2, 0x5d4037);
+  g.lineBetween(x, y - r * 0.8, x + 1, y - r * 1.25);
+  g.fillStyle(0x43a047);
+  g.fillEllipse(x + r * 0.45, y - r * 1.05, r * 0.8, r * 0.38);
+};
+
+// One stone (for rocks), with a shadow and a shine.
+function drawStone(g, x, y, color) {
+  const cx = x * CELL + CELL / 2, cy = y * CELL + CELL / 2;
+  g.fillStyle(0x000000, 0.3);
+  g.fillCircle(cx + 2, cy + 3, CELL * 0.48);
+  g.fillStyle(Phaser.Display.Color.IntegerToColor(color).darken(30).color);
+  g.fillCircle(cx, cy, CELL * 0.5);
+  g.fillStyle(color);
+  g.fillCircle(cx - 1, cy - 1, CELL * 0.42);
+  g.fillStyle(0xffffff, 0.35);
+  g.fillCircle(cx - CELL * 0.18, cy - CELL * 0.18, CELL * 0.14);
+}
+
+// One brick of a maze wall.
+function drawBrick(g, x, y) {
+  g.fillStyle(0x4e342e);
+  g.fillRect(x * CELL, y * CELL, CELL, CELL);
+  g.fillStyle(0xa1887f);
+  g.fillRect(x * CELL + 1, y * CELL + 1, CELL - 2, CELL - 3);
+  g.fillStyle(0xd7ccc8, 0.6);
+  g.fillRect(x * CELL + 1, y * CELL + 1, CELL - 2, 3);
+}
+
+// A snake: a smooth round tube with a shadow, a darker outline, a shine
+// along its back and diamond-shaped scales, getting thinner toward the
+// tail. Then the head, with eyes and a flicking tongue.
+function drawSnakeBody(g, points, direction, bodyColor, headColor, alpha, face, now) {
+  const n = points.length;
+  if (!n) return;
+  const thick = i => CELL * 0.48 * Math.min(1, (n - i) / 5 + 0.35);
+
+  // Put a circle every third of a square along the body.
+  const dots = [];
+  for (let i = 0; i < n; i++) {
+    const a = points[i], b = points[i + 1];
+    const steps = b && Math.abs(a.x - b.x) + Math.abs(a.y - b.y) < 1.5 ? 3 : 1;
+    for (let k = 0; k < steps; k++) {
+      const t = k / steps;
+      const to = b && steps > 1 ? b : a;
+      dots.push({
+        x: (a.x + (to.x - a.x) * t + 0.5) * CELL,
+        y: (a.y + (to.y - a.y) * t + 0.5) * CELL,
+        r: thick(i) + (thick(i + 1) - thick(i)) * t,
+      });
+    }
+  }
+  const color = c => Phaser.Display.Color.IntegerToColor(c);
+  const dark = color(bodyColor).darken(35).color, light = color(bodyColor).lighten(30).color;
+
+  g.fillStyle(0x000000, 0.25 * alpha);                                      // shadow
+  dots.forEach(d => g.fillCircle(d.x + 3, d.y + 4, d.r));
+  g.fillStyle(dark, alpha);                                                 // outline
+  dots.forEach(d => g.fillCircle(d.x, d.y, d.r));
+  g.fillStyle(bodyColor, alpha);                                            // body
+  dots.forEach(d => g.fillCircle(d.x, d.y, d.r * 0.8));
+  dots.forEach((d, k) => {                                                  // shine along the back
+    const next = dots[k + 1];
+    if (!next || Math.abs(next.x - d.x) + Math.abs(next.y - d.y) > CELL) return;
+    g.lineStyle(d.r * 0.45, light, alpha * 0.55);
+    g.lineBetween(d.x - d.r * 0.22, d.y - d.r * 0.22, next.x - next.r * 0.22, next.y - next.r * 0.22);
+  });
+  g.fillStyle(dark, alpha * 0.8);                                           // scales
+  dots.forEach((d, k) => {
+    if (k % 3 !== 1 || k < 4) return;
+    const s = d.r * 0.38;
+    g.fillTriangle(d.x, d.y - s, d.x + s, d.y, d.x - s, d.y);
+    g.fillTriangle(d.x - s, d.y, d.x + s, d.y, d.x, d.y + s);
+  });
+  if (!face) return;
+
+  // Head: a bigger rounded head and snout, pointing the way it's going.
+  const h = dots[0], fx = direction.x, fy = direction.y, sx = -fy, sy = fx;
+  g.fillStyle(0x000000, 0.25 * alpha);
+  g.fillCircle(h.x + 3, h.y + 4, CELL * 0.6);
+  g.fillStyle(color(headColor).darken(35).color, alpha);
+  g.fillCircle(h.x, h.y, CELL * 0.6);
+  g.fillCircle(h.x + fx * CELL * 0.28, h.y + fy * CELL * 0.28, CELL * 0.46);
+  g.fillStyle(headColor, alpha);
+  g.fillCircle(h.x, h.y, CELL * 0.5);
+  g.fillCircle(h.x + fx * CELL * 0.28, h.y + fy * CELL * 0.28, CELL * 0.37);
+  g.fillStyle(0xffffff, alpha * 0.5);
+  g.fillCircle(h.x - CELL * 0.12, h.y - CELL * 0.12, CELL * 0.12);
+
+  // Eyes: yellow with black slit pupils.
+  [-1, 1].forEach(side => {
+    const ex = h.x + fx * CELL * 0.12 + sx * side * CELL * 0.26, ey = h.y + fy * CELL * 0.12 + sy * side * CELL * 0.26;
+    g.fillStyle(0x000000, alpha);
+    g.fillCircle(ex, ey, CELL * 0.17);
+    g.fillStyle(0xffeb3b, alpha);
+    g.fillCircle(ex, ey, CELL * 0.13);
+    g.fillStyle(0x000000, alpha);
+    g.fillEllipse(ex + fx * CELL * 0.03, ey + fy * CELL * 0.03, fx ? CELL * 0.18 : CELL * 0.06, fx ? CELL * 0.06 : CELL * 0.18);
+  });
+
+  // Tongue: a red forked line, out for a moment every couple of seconds.
+  if (Math.floor(now / 300) % 6 === 0) {
+    const bx = h.x + fx * CELL * 0.55, by = h.y + fy * CELL * 0.55;
+    const tx = h.x + fx * CELL * 0.95, ty = h.y + fy * CELL * 0.95;
+    g.lineStyle(2, 0xff1744, alpha);
+    g.lineBetween(bx, by, tx, ty);
+    g.lineBetween(tx, ty, tx + (fx + sx) * CELL * 0.15, ty + (fy + sy) * CELL * 0.15);
+    g.lineBetween(tx, ty, tx + (fx - sx) * CELL * 0.15, ty + (fy - sy) * CELL * 0.15);
+  }
+}
+
+// The grass: a checkerboard of two greens with little tufts, drawn once
+// per board size and saved as a picture.
+function makeField(scene, cols, rows) {
+  const key = 'field-' + cols + 'x' + rows;
+  if (scene.textures.exists(key)) return key;
+  const canvas = scene.textures.createCanvas(key, cols * CELL, rows * CELL);
+  const ctx = canvas.getContext();
+  for (let x = 0; x < cols; x++) {
+    for (let y = 0; y < rows; y++) {
+      ctx.fillStyle = (x + y) % 2 ? '#26401f' : '#2b4823';
+      ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
+    }
+  }
+  for (let i = 0; i < cols * rows * 1.5; i++) {
+    ctx.fillStyle = Math.random() < 0.5 ? 'rgba(0, 20, 0, 0.35)' : 'rgba(160, 230, 120, 0.12)';
+    ctx.fillRect(Math.random() * cols * CELL, Math.random() * rows * CELL, 2, 3);
+  }
+  canvas.refresh();
+  return key;
+}
+
+// A small white dot that sparkle bursts are made of (tinted to any color).
+function makeSpark(scene) {
+  if (scene.textures.exists('spark')) return;
+  const g = scene.make.graphics({ x: 0, y: 0, add: false });
+  g.fillStyle(0xffffff);
+  g.fillCircle(4, 4, 4);
+  g.generateTexture('spark', 8, 8);
+  g.destroy();
+}
+
+// The start and game over screens: the grass, darkened, behind the menus.
+function addBackdrop(scene) {
+  scene.add.image(0, 0, makeField(scene, COLS, ROWS)).setOrigin(0);
+  scene.add.rectangle(0, 0, WIDTH, HEIGHT, 0x000000, 0.6).setOrigin(0);
+}
 
 
 // =====================================================================
@@ -1777,6 +1972,7 @@ class GameOverScene extends Phaser.Scene {
   // data is what the game screen sent: the mode and color, plus either
   // { score, best, newBest } for one player or { winner, winnerColor, scores } for two.
   create(data) {
+    addBackdrop(this); // see 3n
     this.add.text(WIDTH / 2, HEIGHT / 2 - 120, 'GAME OVER', { fontSize: '52px', color: '#ff4444' }).setOrigin(0.5);
     this.add.text(WIDTH / 2, HEIGHT / 2 - 65, MODES[data.mode].name + ' mode', { fontSize: '18px', color: '#aaaaaa' }).setOrigin(0.5);
 
