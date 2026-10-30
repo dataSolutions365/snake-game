@@ -26,6 +26,10 @@
     th:first-child, td:first-child { text-align: left; }
     th { color: #aaa; font-weight: normal; }
     #error { color: #ff6666; }
+    /* stats.html?embed=1 is a small version to put on another web page:
+       just the four totals, with a transparent background. */
+    body.embed { padding: 0; background: transparent; }
+    body.embed .full { display: none; }
   </style>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -33,20 +37,24 @@
 </head>
 <body>
 <main>
-  <h1>🐍 Snake stats</h1>
-  <p class="note">How much the game gets played. No names or personal info are saved, just counts. Days are in UTC.</p>
+  <h1 class="full">🐍 Snake stats</h1>
+  <p class="note full">How much the game gets played. No names or personal info are saved, just counts. Days are in UTC.</p>
   <p id="error"></p>
 
   <div class="cards" id="cards"></div>
 
-  <h2>Games per day (last 30 days)</h2>
-  <div class="bars" id="bars"></div>
+  <div class="full">
+    <h2>Games per day (last 30 days)</h2>
+    <div class="bars" id="bars"></div>
 
-  <h2>Every day</h2>
-  <div class="table-wrap"><table id="table"></table></div>
+    <h2>Every day</h2>
+    <div class="table-wrap"><table id="table"></table></div>
+  </div>
 </main>
 
 <script>
+  if (new URLSearchParams(location.search).get('embed')) document.body.classList.add('embed');
+
   // The columns in the table, in order: [field name, heading].
   const COLUMNS = [
     ['visits', 'Visits'], ['phone_visits', 'Phone'], ['computer_visits', 'Computer'], ['games', 'Games'],
