@@ -47,6 +47,13 @@ service cloud.firestore {
       allow read: if true;
       allow create: if validScore();
     }
+    // Usage counts for stats.html: one record per day, only these numbers.
+    match /stats/{day} {
+      allow read: if true;
+      allow create, update: if day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && request.resource.data.keys().hasOnly(['visits', 'phone_visits', 'computer_visits', 'games', 'rooms',
+             'games_easy', 'games_easy_snakes', 'games_medium', 'games_medium_snakes', 'games_twoplayer', 'games_online']);
+    }
   }
 }
 ```

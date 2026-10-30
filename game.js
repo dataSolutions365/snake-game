@@ -559,6 +559,11 @@ class GameScene extends Phaser.Scene {
     }
     if (this.online) this.startOnline();
 
+    // Count it for the stats page (stats.js). Online, only the host counts it.
+    if (!this.online || this.online.isHost) {
+      Stats.countGame(this.mode.online ? 'online' : this.mode.players === 1 ? Leaderboard.boardFor(this.modeKey, this.snakesOn) : this.modeKey);
+    }
+
     this.draw();
   }
 

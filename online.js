@@ -119,6 +119,7 @@ async function createRoom(name, color) {
   });
   // If the host closes the tab, the whole room goes away.
   room.onDisconnect().remove();
+  Stats.countRoom(); // for the stats page (stats.js)
   enterRoom(code, true);
 }
 

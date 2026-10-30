@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Snake stats</title>
+  <!-- How much the game gets played. The numbers come from stats.js in the game. -->
+  <style>
+    body { margin: 0; background: #1b1b1b; color: #fff; font-family: monospace; padding: 16px; }
+    main { max-width: 900px; margin: 0 auto; }
+    h1 { color: #7cfc00; font-size: 32px; margin: 8px 0 4px; }
+    h2 { color: #ffff66; font-size: 18px; margin: 28px 0 10px; }
+    .note { color: #999; margin: 0 0 16px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+    .card { background: #2a2a2a; border-radius: 8px; padding: 12px; }
+    .card .label { color: #aaa; font-size: 14px; }
+    .card .big { font-size: 30px; color: #7cfc00; margin: 4px 0; }
+    .card .small { color: #ccc; font-size: 14px; }
+    .bars { display: grid; gap: 4px; }
+    .bar-row { display: grid; grid-template-columns: 90px 1fr 50px; gap: 8px; align-items: center; font-size: 14px; }
+    .bar { height: 16px; background: #7cfc00; border-radius: 3px; }
+    .table-wrap { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { padding: 6px 8px; text-align: right; border-bottom: 1px solid #333; white-space: nowrap; }
+    th:first-child, td:first-child { text-align: left; }
+    th { color: #aaa; font-weight: normal; }
+    #error { color: #ff6666; }
+  </style>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="firebase-config.js"></script>
+</head>
+<body>
+<main>
+  <h1>🐍 Snake stats</h1>
+  <p class="note">How much the game gets played. No names or personal info are saved, just counts. Days are in UTC.</p>
+  <p id="error"></p>
+
+  <div class="cards" id="cards"></div>
+
+  <h2>Games per day (last 30 days)</h2>
+  <div class="bars" id="bars"></div>
+
+  <h2>Every day</h2>
+  <div class="table-wrap"><table id="table"></table></div>
+</main>
+
+<script>
+  // The columns in the table, in order: [field name, heading].
+  const COLUMNS = [
+    ['visits', 'Visits'], ['phone_visits', 'Phone'], ['computer_visits', 'Computer'], ['games', 'Games'],
+    ['games_easy', 'Easy'], ['games_easy_snakes', 'Easy 🐍'], ['games_medium', 'Medium'], ['games_medium_snakes', 'Medium 🐍'],
+    ['games_twoplayer', '2 players'], ['games_online', 'Online'], ['rooms', 'Rooms'],
+  ];
+  const el = id => document.getElementById(id);
+  const num = value => Number(value) || 0;
+  const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+
+  async function load() {
+    if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+    const snap = await firebase.firestore().collection('stats').get();
+    const days = snap.docs.map(doc => ({ day: doc.id, ...doc.data() })).sort((a, b) => b.day.localeCompare(a.day));
+
+    // Totals for a number of days back from today (0 = all of them).
+    const dayString = daysAgo => new Date(Date.now() - daysAgo * 86400000).toISOString().slice(0, 10);
+    const total = (field, lastDays) => days
+      .filter(d => !lastDays || d.day > dayString(lastDays))
+      .reduce((sum, d) => sum + num(d[field]), 0);
+
+    const card = (label, lastDays) => `<div class="card"><div class="label">${label}</div>
+      <div class="big">${plural(total('games', lastDays), 'game')}</div>
+      <div class="small">${plural(total('visits', lastDays), 'visit')} · ${plural(total('rooms', lastDays), 'online room')}</div></div>`;
+    el('cards').innerHTML = card('Today', 1) + card('Last 7 days', 7) + card('Last 30 days', 30) + card('All time', 0);
+
+    // Bars: one per day for the last 30 days, including days with nothing.
+    const recent = [];
+    for (let i = 29; i >= 0; i--) {
+      const day = dayString(i);
+      const found = days.find(d => d.day === day);
+      recent.push({ day, games: found ? num(found.games) : 0 });
+    }
+    const most = Math.max(1, ...recent.map(d => d.games));
+    el('bars').innerHTML = recent.reverse().map(d => `<div class="bar-row"><span>${d.day.slice(5)}</span>
+      <div><div class="bar" style="width:${d.games ? Math.max(1, d.games / most * 100) : 0}%"></div></div><span>${d.games}</span></div>`).join('');
+
+    // The table: every day, newest first.
+    el('table').innerHTML = '<tr><th>Day</th>' + COLUMNS.map(c => `<th>${c[1]}</th>`).join('') + '</tr>'
+      + days.map(d => `<tr><td>${d.day}</td>` + COLUMNS.map(c => `<td>${num(d[c[0]])}</td>`).join('') + '</tr>').join('');
+    if (!days.length) el('table').innerHTML += '<tr><td colspan="12">No games yet.</td></tr>';
+  }
+
+  load().catch(e => {
+    el('error').textContent = 'Couldn\'t load the stats. If you just set this up, check the Firestore rules (FIREBASE_SETUP.md, step 3). ' + e.message;
+  });
+</script>
+</body>
+</html>
