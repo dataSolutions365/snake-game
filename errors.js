@@ -13,7 +13,7 @@
 //  (see the end of game.js).
 // =====================================================================
 
-const GAME_VERSION = 36;   // matches the ?v= number in index.html
+const GAME_VERSION = 37;   // matches the ?v= number in index.html
 const MAX_ERRORS_SAVED = 5; // per page load, so one stuck error can't flood the list
 
 let errorsSaved = 0;

@@ -87,12 +87,22 @@ async function syncOnOpen() {
   if (remote.savedAt > localAt && remote.data !== snapshot()) applyRemote(remote);
 }
 
+// Firebase's own message is no help to a kid.
+function friendly(error) {
+  if (error && error.code === 'permission-denied') return new Error('Saving is switched off right now. Ask a grown-up to check the save code setup.');
+  if (error && error.code === 'unavailable') return new Error('No connection. Try again in a bit.');
+  return error;
+}
+
 window.SaveCode = {
   available: () => !!savesList(),
   code: () => (myCode() ? showCode(myCode()) : null),
 
   // Make a new code for this device and save its progress under it.
-  async create() {
+  create() { return this.makeCode().catch(e => { throw friendly(e); }); },
+  load(typed) { return this.loadCode(typed).catch(e => { throw friendly(e); }); },
+
+  async makeCode() {
     const list = savesList();
     if (!list) throw new Error('Saving isn\'t set up.');
     for (let tries = 0; tries < 5; tries++) {
@@ -108,7 +118,7 @@ window.SaveCode = {
   },
 
   // Load someone's code on this device (replaces what's here).
-  async load(typed) {
+  async loadCode(typed) {
     const list = savesList(), code = cleanCode(typed);
     if (!list) throw new Error('Saving isn\'t set up.');
     if (code.length !== 8) throw new Error('A code is 8 letters and numbers, like K7Q4-M2XP.');

@@ -26,8 +26,8 @@
 //  1. SKINS
 //  How each one looks is in drawSnakeBody() in game.js (section 3n).
 //  unlocked: a test on your lifetime totals (see section 4).
-//  power: what wearing it does, in Easy and Medium (see skinPower() in
-//  game.js, section 3o). Online, skins are only for looks.
+//  power: what wearing it does, in Easy, Medium and online (see
+//  skinPower() in game.js, section 3o). Not with 2 players on one computer.
 // =====================================================================
 
 const SKINS = [

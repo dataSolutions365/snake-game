@@ -272,7 +272,7 @@ function onTurns(callback) {
 function sendState(state) {
   if (!session) return;
   session.room.child('state').set({
-    players: state.players.map(p => ({ id: p.id, b: packSpots(p.body), s: p.score, x: p.crashed ? 1 : 0, u: p.until })),
+    players: state.players.map(p => ({ id: p.id, b: packSpots(p.body), s: p.score, x: p.crashed ? 1 : 0, u: p.until, sh: p.shield ? 1 : 0 })),
     food: packSpots(state.foods),
     left: state.leftovers.map(l => l.x + ',' + l.y + ',' + l.color).join(';'),
     pu: state.powerUps.map(pu => pu.x + ',' + pu.y + ',' + pu.kind + ',' + pu.until).join(';'),
@@ -313,7 +313,7 @@ function onState(callback) {
     const raw = snap.val();
     if (!raw) return;
     callback({
-      players: (raw.players || []).map(p => ({ id: p.id, body: unpackSpots(p.b), score: p.s, crashed: !!p.x, until: p.u || {} })),
+      players: (raw.players || []).map(p => ({ id: p.id, body: unpackSpots(p.b), score: p.s, crashed: !!p.x, until: p.u || {}, shield: !!p.sh })),
       foods: unpackSpots(raw.food),
       leftovers: raw.left ? raw.left.split(';').map(t => {
         const [x, y, color] = t.split(',').map(Number);

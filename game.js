@@ -127,7 +127,7 @@ const SKIN_COLORS = {
 };
 
 // Skin powers (what each one does is in rewards.js, see skinPower() in 3o).
-// Only in games on your own (not 2 players or online).
+// In games on your own and online (not 2 players on one computer).
 const TIGER_COMBO_EXTRA = 1500;  // milliseconds more to keep a combo going
 const LEOPARD_REACH = 3;         // apples this close slide to you
 const GOLD_EVERY = 5;            // every 5th apple...
@@ -450,9 +450,20 @@ class StartScene extends Phaser.Scene {
           SaveCode.create().then(() => this.scene.restart({ openRewards: true }))
             .catch(e => status.setText(e.message).setColor('#ff6666'));
         }), button('I have a code', '#cccccc', loadCode)];
-    if (PORTRAIT) status.setVisible(false); // no room on a phone
     if (!code) status.setText('Play on another device with the same progress. No name or email needed.');
     else status.setText('Type this code on another device to play with the same progress there.');
+    // No room for the line under the buttons on a phone: messages cover
+    // the buttons for a few seconds instead.
+    if (PORTRAIT) {
+      status.setVisible(false).setY(y).setOrigin(0.5).setFontSize(14).setBackgroundColor('#000000').setPadding(6, 6, 6, 6);
+      const setText = status.setText.bind(status);
+      status.setText = text => {
+        setText(text).setVisible(true);
+        if (this.statusTimer) this.statusTimer.remove();
+        this.statusTimer = this.time.delayedCall(5000, () => status.setVisible(false));
+        return status;
+      };
+    }
     let x = WIDTH / 2 - (parts.reduce((total, part) => total + part.width, 0) + 10 * (parts.length - 1)) / 2;
     parts.forEach(part => { part.x = x; x += part.width + 10; });
     box.add([...parts, status]);
@@ -488,7 +499,7 @@ class StartScene extends Phaser.Scene {
   showSkinChoice() {
     const wearing = Rewards.skin();
     const shown = Rewards.SKINS.find(s => s.key === (this.powerShown || wearing));
-    this.powerLine.setText(PORTRAIT ? shown.power : shown.name + ' power: ' + shown.power + (shown.key === 'classic' ? '' : '  (Easy & Medium)'))
+    this.powerLine.setText(PORTRAIT ? shown.power : shown.name + ' power: ' + shown.power)
       .setColor(Rewards.isUnlocked(shown.key) ? '#7cfc00' : '#aaaaaa');
     this.skinCards.forEach(({ skin, back, note }) => {
       const open = Rewards.isUnlocked(skin.key);
@@ -1529,6 +1540,7 @@ GameScene.prototype.setupOnlinePlayers = function (info) {
     const body = [{ x, y }, { x: x + step, y }, { x: x + 2 * step, y }];
     const player = this.makePlayer(p.name, PLAYER_COLORS[p.color], body, { x: goingRight ? 1 : -1, y: 0 }, p.id);
     player.skin = p.skin || 'classic';
+    this.skinPower(player); // see 3o
     this.players.push(player);
   });
   this.me = this.players.find(p => p.id === info.myId);
@@ -1602,6 +1614,7 @@ GameScene.prototype.applyOnlineState = function (state) {
     p.score = sent.score;
     p.crashed = sent.crashed;
     p.until = sent.until;
+    p.shield = sent.shield; // so the shield bubble shows
     // Work out which way it's going from its first two squares,
     // so we don't let you ask to turn straight back.
     if (p.body.length > 1) p.direction = { x: p.body[0].x - p.body[1].x, y: p.body[0].y - p.body[1].y };
