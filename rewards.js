@@ -1,12 +1,15 @@
 // =====================================================================
 //  REWARDS
 //  Things that keep people coming back: snake skins you unlock by
-//  playing, achievements, and a new challenge every day.
+//  playing, achievements, a new challenge every day, items you win and
+//  use when you choose, and a prize for opening the game each day.
 //  Everything is saved in the browser, so it's per device.
 //
 //    1. SKINS         the list, and what unlocks each one
 //    2. ACHIEVEMENTS  the list, and what earns each one
 //    3. DAILY         the challenges, one picked for each day
+//    3b. ITEMS        won from challenges and logins, used in a game
+//    3c. DAILY LOGIN  a prize each day, a grand prize on day 7
 //    4. SAVING        lifetime totals, kept in the browser
 //
 //  game.js uses it like this:
@@ -14,6 +17,8 @@
 //    Rewards.note('apple')         when something happens to your snake
 //                                  (returns any new unlocks, to show them)
 //    Rewards.skin()                the skin you're wearing
+//    Rewards.useItem('shield')     spend one item (true if you had one)
+//    Rewards.checkLogin()          today's login prize (once a day)
 // =====================================================================
 
 
@@ -26,10 +31,11 @@
 const SKINS = [
   { key: 'classic', name: 'Classic', how: 'Yours from the start',      unlocked: t => true },
   { key: 'tiger',   name: 'Tiger',   how: 'Play 5 games',              unlocked: t => t.games >= 5 },
-  { key: 'leopard', name: 'Leopard', how: 'Eat 100 apples in all',     unlocked: t => t.apples >= 100 },
+  { key: 'leopard', name: 'Leopard', how: 'Eat 100 apples',     unlocked: t => t.apples >= 100 },
   { key: 'rainbow', name: 'Rainbow', how: 'Get a x5 combo',            unlocked: t => t.bestCombo >= 5 },
-  { key: 'gold',    name: 'Gold',    how: 'Score 50 in one game',      unlocked: t => t.bestScore >= 50 },
-  { key: 'lava',    name: 'Lava',    how: '3 daily challenges',       unlocked: t => t.dailiesDone >= 3 },
+  { key: 'gold',    name: 'Gold',    how: 'Score 50 once',      unlocked: t => t.bestScore >= 50 },
+  { key: 'lava',    name: 'Lava',    how: '3 challenges',       unlocked: t => t.dailiesDone >= 3 },
+  { key: 'diamond', name: 'Diamond', how: 'Day 7 prize',        unlocked: t => t.grandPrizes >= 1 },
 ];
 
 
@@ -84,6 +90,73 @@ function today() {
 function dailyChallenge() {
   return DAILY_CHALLENGES[(today().number * 4) % DAILY_CHALLENGES.length];
 }
+function yesterdayText() {
+  return new Date((today().number - 1) * 86400000).toISOString().slice(0, 10);
+}
+
+
+// =====================================================================
+//  3b. ITEMS
+//  Special power-ups you keep and use when you want, in Easy or Medium
+//  (keys 1 to 4, or tap them in the corner). You win one for each daily
+//  challenge, and more from the daily login prizes.
+//  What each one does is in useItem() in game.js (section 3o).
+// =====================================================================
+
+const ITEMS = {
+  shield: { icon: '🛡️', name: 'Shield', about: 'Your next crash doesn\'t count' },
+  magnet: { icon: '🧲', name: 'Magnet', about: 'Pulls nearby apples to you' },
+  freeze: { icon: '❄️', name: 'Freeze', about: 'Computer snakes stop still' },
+  double: { icon: '💰', name: 'Double', about: 'Double points' },
+};
+const ITEM_KEYS = Object.keys(ITEMS);
+
+function giveItems(list) {
+  list.forEach(key => { totals.items[key] = (totals.items[key] || 0) + 1; });
+}
+// "🛡️ Shield + 🧲 Magnet"
+function itemNames(list) {
+  return list.map(key => ITEMS[key].icon + ' ' + ITEMS[key].name).join(' + ');
+}
+
+
+// =====================================================================
+//  3c. DAILY LOGIN
+//  Open the game on days in a row to move through a 7-day week: a prize
+//  each day, and a grand prize on day 7. Miss a day and the week starts
+//  over at day 1. After day 7, a new week starts.
+// =====================================================================
+
+const LOGIN_PRIZES = [
+  ['magnet'],
+  ['shield'],
+  ['freeze'],
+  ['double'],
+  ['magnet', 'shield'],
+  ['freeze', 'double'],
+  ['shield', 'shield', 'magnet', 'magnet', 'freeze', 'freeze', 'double', 'double'], // the grand prize (+ the Diamond skin)
+];
+
+// Called each time the start screen opens. The first time each day, it
+// moves you one day along the week, gives you that day's prize and
+// returns { day, prize text } to show. Otherwise null.
+function checkLogin() {
+  const day = today().text;
+  if (totals.lastLogin === day) return null;
+  const inARow = totals.lastLogin === yesterdayText() && totals.loginDay < 7;
+  totals.loginDay = inARow ? totals.loginDay + 1 : 1;
+  totals.lastLogin = day;
+  const prize = LOGIN_PRIZES[totals.loginDay - 1];
+  giveItems(prize);
+  let text = itemNames(prize);
+  if (totals.loginDay === 7) {
+    text = 'GRAND PRIZE! 2 of every item';
+    if (totals.grandPrizes === 0) text += ' + the Diamond skin';
+    totals.grandPrizes += 1;
+  }
+  saveTotals();
+  return { day: totals.loginDay, prize: text };
+}
 
 
 // =====================================================================
@@ -94,6 +167,7 @@ function dailyChallenge() {
 const BLANK_TOTALS = {
   games: 0, apples: 0, bestCombo: 0, bestScore: 0, mazes: 0, swallows: 0, smashes: 0,
   powerUps: 0, bestTime: 0, dailiesDone: 0, lastDaily: '', streak: 0, bestStreak: 0,
+  items: {}, loginDay: 0, lastLogin: '', grandPrizes: 0,
 };
 
 function loadTotals() {
@@ -145,13 +219,16 @@ function note(what, value) {
   // The daily challenge: once a day. Doing it the day after the last one
   // keeps your streak going.
   const day = today();
+  // It wins you a random item.
   if (totals.lastDaily !== day.text && dailyChallenge().done(game)) {
-    const yesterday = new Date((day.number - 1) * 86400000).toISOString().slice(0, 10);
-    totals.streak = totals.lastDaily === yesterday ? totals.streak + 1 : 1;
+    totals.streak = totals.lastDaily === yesterdayText() ? totals.streak + 1 : 1;
     totals.bestStreak = Math.max(totals.bestStreak, totals.streak);
     totals.lastDaily = day.text;
     totals.dailiesDone += 1;
-    messages.push('📅 Daily challenge done!' + (totals.streak > 1 ? ' ' + totals.streak + ' days in a row!' : ''));
+    const won = ITEM_KEYS[Math.floor(Math.random() * ITEM_KEYS.length)];
+    giveItems([won]);
+    messages.push('📅 Daily challenge done! You won ' + itemNames([won]) + '!');
+    if (totals.streak > 1) messages.push('🔥 ' + totals.streak + ' days in a row!');
   }
   messages.push(...whatsNew(before));
   // Score and time change all the time; only save when something else did.
@@ -168,7 +245,16 @@ function skin() {
 }
 
 window.Rewards = {
-  SKINS, ACHIEVEMENTS,
+  SKINS, ACHIEVEMENTS, ITEMS, LOGIN_PRIZES,
+  items: () => totals.items,
+  useItem(key) {
+    if (!totals.items[key]) return false;
+    totals.items[key] -= 1;
+    saveTotals();
+    return true;
+  },
+  checkLogin,
+  login: () => ({ day: totals.lastLogin === today().text || totals.lastLogin === yesterdayText() ? totals.loginDay : 0 }),
   totals: () => totals,
   // A new game: count it, and return messages for anything that unlocks.
   startGame(mode) {
@@ -187,8 +273,7 @@ window.Rewards = {
   // Today's challenge, whether it's done, and the streak (if it's still going).
   daily() {
     const day = today();
-    const yesterday = new Date((day.number - 1) * 86400000).toISOString().slice(0, 10);
-    const going = totals.lastDaily === day.text || totals.lastDaily === yesterday;
+    const going = totals.lastDaily === day.text || totals.lastDaily === yesterdayText();
     return { text: dailyChallenge().text, done: totals.lastDaily === day.text, streak: going ? totals.streak : 0 };
   },
 };

@@ -8,7 +8,8 @@
 //    3. THE GAME        the snake, food, controls, score and computer snakes
 //       (3i covers online games; the rest of online play is in online.js)
 //       (3j covers the big world, the cameras, spin and lights out)
-//       (3k mazes, 3l rocks, 3m snakes eating snakes, 3n how everything looks)
+//       (3k mazes, 3l rocks, 3m snakes eating snakes, 3n how everything looks,
+//        3o items you win and use when you choose)
 //    4. GAME OVER       the screen after you crash
 //    5. START PHASER    joins the screens together and starts it all
 // =====================================================================
@@ -48,12 +49,14 @@ const CRASH_COSTS = 5;            // points you lose for crashing online
 //   they also come half as often.
 // rocks: how many rock piles on each screen. Hit one and you crash.
 // mazes: true means mazes show up now and then (see MAZE_ settings below).
+// mazeChance: how likely a maze is each time one could show up, from 0
+//   (never) to 1 (every time). Leave it out for every time.
 // screens: how big the world is. 2 means 2 x 2 screens: you see one at a
 // time, and the view flips to the next when you go past the edge.
 // (2 players on one keyboard stay on 1 screen, so you can both see.)
 const MODES = {
-  easy:      { name: 'EASY',      about: 'Fewer power-ups', players: 1, computerSnakes: 3, food: 4,  powerUps: 1, screens: 2, mazes: true, rocks: 0 },
-  medium:    { name: 'MEDIUM',    about: 'Rocks in the way', players: 1, computerSnakes: 5, food: 8, powerUps: 3, screens: 2, mazes: true, rocks: 6 },
+  easy:      { name: 'EASY',      about: 'Fewer power-ups', players: 1, computerSnakes: 3, food: 3,  powerUps: 1, screens: 1, rocks: 0 },
+  medium:    { name: 'MEDIUM',    about: 'Rocks in the way', players: 1, computerSnakes: 5, food: 8, powerUps: 3, screens: 2, mazes: true, mazeChance: 0.5, rocks: 6 },
   twoplayer: { name: '2 PLAYERS', about: 'Same computer',   players: 2, computerSnakes: 0, food: 2,  powerUps: 3, screens: 1 },
   online:    { name: 'ONLINE',    about: 'Private room',    online: true, computerSnakes: 0, food: 10, powerUps: 3, screens: 2, mazes: true },
 };
@@ -108,9 +111,15 @@ const COMBO_MAX_BONUS = 5;
 // own colors; the others use your color with a pattern on top (see
 // drawSnakeBody in 3n).
 const SKIN_COLORS = {
-  gold: { body: 0xe8b923, head: 0xffe17a },
-  lava: { body: 0x8b2500, head: 0xff7043 },
+  gold:    { body: 0xe8b923, head: 0xffe17a },
+  lava:    { body: 0x8b2500, head: 0xff7043 },
+  diamond: { body: 0x8fdcf5, head: 0xe3f8ff },
 };
+
+// Items (won daily, see rewards.js): how long each lasts once you use it.
+// The shield lasts until your next crash.
+const ITEM_LASTS = { magnet: 10000, freeze: 8000, double: 15000 };
+const MAGNET_REACH = 7;      // apples this many squares away (or closer) get pulled in
 
 // Colors the player can pick for their snake. "head" is a lighter shade for the head.
 // To add a color, add a line here.
@@ -235,7 +244,12 @@ class StartScene extends Phaser.Scene {
   constructor() { super('Start'); } // 'Start' is this screen's name
 
   create() {
+    // Phaser reuses this screen each time it opens, so forget the
+    // buttons from last time (they're gone now).
     this.p2Label = null;
+    this.skinCards = null;
+    this.loginBox = null;
+    this.twoPlayerSetup = null;
 
     // Opened from a room invite link (?room=ABCDE)? Go to the online menu.
     if (LINK.get('room') && !quickLinkUsed && Online.available()) {
@@ -280,6 +294,10 @@ class StartScene extends Phaser.Scene {
 
     this.setupSnakesSwitch(HEIGHT / 2 + (PORTRAIT ? 8 : 25));
 
+    // The first visit each day: today's login prize (see rewards.js).
+    const login = Rewards.checkLogin();
+    if (login) this.showLoginPrize(login);
+
     // One button per mode. Keyboard: 1, 2, 3...
     // On a wide screen they sit side by side (two rows if there are 4);
     // on a phone they stack down the screen.
@@ -297,7 +315,7 @@ class StartScene extends Phaser.Scene {
       const y = PORTRAIT ? HEIGHT / 2 + 75 + i * 100 : HEIGHT / 2 + 80 + row * 105;
       // Tell the game which mode, and which color the player picked.
       const start = () => {
-        if (Leaderboard.isOpen() || this.legend.visible || this.rewards.visible) return; // something is showing on top
+        if (Leaderboard.isOpen() || this.legend.visible || this.rewards.visible || this.loginBox) return; // something is showing on top
         if (this.twoPlayerSetup && this.twoPlayerSetup.visible) return;
         if (mode.online) this.scene.start('OnlineMenu', { color: this.colorChoice });
         else if (mode.players === 2) this.showTwoPlayerSetup(key); // pick controls first
@@ -333,13 +351,17 @@ class StartScene extends Phaser.Scene {
     this.rewards = box;
     box.add(this.add.rectangle(0, 0, WIDTH, HEIGHT, 0x000000, 0.94).setOrigin(0).setInteractive());
     box.add(this.add.text(WIDTH / 2, 28, '🏅 REWARDS', { fontSize: '30px', color: '#ffd700' }).setOrigin(0.5));
-    box.add(this.add.text(WIDTH / 2, 72, '📅 Today: ' + daily.text + (daily.done ? '  ✅ Done!' : '')
+    const items = Rewards.items();
+    box.add(this.add.text(WIDTH / 2, 86, '📅 Today: ' + daily.text + (daily.done ? '  ✅ Done!' : PORTRAIT ? '' : '  (wins an item)')
       + '\nFinished: ' + Rewards.totals().dailiesDone + (daily.streak > 1 ? '   🔥 ' + daily.streak + ' days in a row' : '')
-      + '   (new one every day)', { fontSize: PORTRAIT ? '14px' : '17px', color: '#ffffff', align: 'center', lineSpacing: 4 }).setOrigin(0.5));
+      + '\n🎁 Daily login: day ' + Rewards.login().day + ' of 7' + (PORTRAIT ? '' : ' (day 7 = grand prize)')
+      + '\n🎒 Items: ' + Object.keys(Rewards.ITEMS).map(key => Rewards.ITEMS[key].icon + (items[key] || 0)).join('  ')
+      + (PORTRAIT ? '' : TOUCH ? '  (tap them in a game)' : '  (keys 1-4 in a game)'),
+      { fontSize: PORTRAIT ? '13px' : '16px', color: '#ffffff', align: 'center', lineSpacing: 4 }).setOrigin(0.5));
 
-    // The skin cards: 6 in a row, or 3 x 2 on a phone.
-    const perRow = PORTRAIT ? 3 : 6, cardW = PORTRAIT ? 120 : 122, cardH = PORTRAIT ? 92 : 112, gap = PORTRAIT ? 8 : 6;
-    const top = 140;
+    // The skin cards: 7 in a row, or 4 + 3 on a phone.
+    const perRow = PORTRAIT ? 4 : 7, cardW = PORTRAIT ? 92 : 106, cardH = PORTRAIT ? 92 : 112, gap = PORTRAIT ? 6 : 5;
+    const top = 166;
     box.add(this.add.text(WIDTH / 2, top - 22, 'SKINS: ' + (TOUCH ? 'tap' : 'click') + ' one to wear it', { fontSize: '16px', color: '#cccccc' }).setOrigin(0.5));
     this.skinCards = Rewards.SKINS.map((skin, i) => {
       const x = WIDTH / 2 + ((i % perRow) - (perRow - 1) / 2) * (cardW + gap);
@@ -351,8 +373,8 @@ class StartScene extends Phaser.Scene {
           Rewards.setSkin(skin.key);
           this.showSkinChoice();
         });
-      const art = this.add.graphics({ x: x - cardW / 2 + 8, y: y - cardH / 2 + 6 }).setScale(0.6);
-      const name = this.add.text(x, y + (PORTRAIT ? 2 : 12), skin.name, { fontSize: '16px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5);
+      const art = this.add.graphics({ x: x - cardW / 2 + 6, y: y - cardH / 2 + 6 }).setScale(PORTRAIT ? 0.48 : 0.56);
+      const name = this.add.text(x, y + (PORTRAIT ? 2 : 12), skin.name, { fontSize: PORTRAIT ? '14px' : '16px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5);
       const note = this.add.text(x, y + (PORTRAIT ? 26 : 36), '', { fontSize: '12px', color: '#aaaaaa', align: 'center', wordWrap: { width: cardW - 8 } }).setOrigin(0.5);
       box.add([back, art, name, note]);
       return { skin, back, art, note };
@@ -378,6 +400,32 @@ class StartScene extends Phaser.Scene {
       .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerdown', toggle);
     this.input.keyboard.on('keydown-R', toggle);
     this.showSkinChoice();
+  }
+
+  // The daily login prize: a row of 7 days, today's lit up, and what you won.
+  showLoginPrize({ day, prize }) {
+    const box = this.add.container(0, 0).setDepth(20);
+    this.loginBox = box;
+    box.add(this.add.rectangle(0, 0, WIDTH, HEIGHT, 0x000000, 0.9).setOrigin(0).setInteractive());
+    box.add(this.add.text(WIDTH / 2, HEIGHT / 2 - 150, '🎁 DAILY PRIZE', { fontSize: '34px', color: '#ffd700' }).setOrigin(0.5));
+    box.add(this.add.text(WIDTH / 2, HEIGHT / 2 - 105, 'Day ' + day + ' of 7', { fontSize: '20px', color: '#ffffff' }).setOrigin(0.5));
+    const size = PORTRAIT ? 48 : 70, gap = PORTRAIT ? 5 : 10;
+    Rewards.LOGIN_PRIZES.forEach((items, i) => {
+      const x = WIDTH / 2 + (i - 3) * (size + gap), y = HEIGHT / 2 - 30;
+      const done = i + 1 < day, now = i + 1 === day;
+      box.add(this.add.rectangle(x, y, size, size + 16, now ? 0x3d3d1a : 0x222222).setStrokeStyle(3, now ? 0xffd700 : done ? 0x7cfc00 : 0x444444));
+      box.add(this.add.text(x, y - size / 2 + 4, 'Day ' + (i + 1), { fontSize: PORTRAIT ? '11px' : '13px', color: '#cccccc' }).setOrigin(0.5, 0));
+      const icon = i === 6 ? '🏆' : done ? '✅' : Rewards.ITEMS[items[0]].icon + (items.length > 1 ? '+' : '');
+      box.add(this.add.text(x, y + 10, icon, { fontSize: PORTRAIT ? '18px' : '26px' }).setOrigin(0.5));
+    });
+    box.add(this.add.text(WIDTH / 2, HEIGHT / 2 + 50, 'You got: ' + prize, {
+      fontSize: '18px', color: '#7cfc00', align: 'center', wordWrap: { width: WIDTH - 40 } }).setOrigin(0.5));
+    box.add(this.add.text(WIDTH / 2, HEIGHT / 2 + 90, 'Come back tomorrow for day ' + (day % 7 + 1) + '. Miss a day and it starts over.',
+      { fontSize: '14px', color: '#aaaaaa', align: 'center', wordWrap: { width: WIDTH - 40 } }).setOrigin(0.5));
+    const close = () => { box.destroy(); this.loginBox = null; this.scene.restart(); }; // restart so the rewards screen shows the new items
+    box.add(makeButton(this, WIDTH / 2, HEIGHT / 2 + 150, TOUCH ? 'Collect!' : 'Collect! (SPACE)', '#ffd700', close));
+    this.input.keyboard.once('keydown-SPACE', () => { if (this.loginBox) close(); });
+    Sound.play('unlock');
   }
 
   // Light up the skin being worn, and say how to unlock the others.
@@ -692,6 +740,8 @@ class GameScene extends Phaser.Scene {
     // Rewards are earned in games on this device, not online.
     this.toasts = [];
     if (!this.online) this.toast(Rewards.startGame(this.modeKey));
+    this.frozenUntil = 0;
+    if (!this.online && this.players.length === 1) this.setupItemBar(); // see 3o
     this.events.once('shutdown', () => Rewards.endGame());
 
     if (!this.online || this.online.isHost) {
@@ -849,6 +899,7 @@ class GameScene extends Phaser.Scene {
     // First work out where every moving player's new head goes:
     // one square in their current direction.
     alive.forEach(p => {
+      p.scoreBefore = p.score; // for 💰 double points (see 3o)
       p.direction = p.nextDirection;
       p.newHead = { x: p.body[0].x + p.direction.x, y: p.body[0].y + p.direction.y };
     });
@@ -889,7 +940,7 @@ class GameScene extends Phaser.Scene {
     }
 
     // Moving = add a new head at the front, remove the last tail square.
-    alive.filter(p => !p.crashed).forEach(p => {
+    alive.filter(p => !p.crashed && !p.bounced).forEach(p => {
       this.noteMove(p, this.has(p, 'speed') ? MOVE_EVERY / 2 : this.has(p, 'slow') ? MOVE_EVERY * 2 : MOVE_EVERY); // see 3n
       p.body.unshift(p.newHead);
       if (this.eatFoodAt(p.newHead)) {
@@ -920,6 +971,7 @@ class GameScene extends Phaser.Scene {
       this.takePowerUpAt(p);
       this.checkMaze(p); // see 3k
     });
+    alive.forEach(p => this.afterItems(p)); // shield bounces and double points (see 3o)
     this.updateScoreText();
     if (this.me && !this.me.crashed) {
       this.reward(this.me, 'score', this.me.score);
@@ -929,7 +981,8 @@ class GameScene extends Phaser.Scene {
 
     // Now the computer snakes take their step, and power-ups come and go.
     if (fullStep) {
-      this.moveComputerSnakes();
+      if (this.clock >= this.frozenUntil) this.moveComputerSnakes(); // ❄️ freeze stops them (see 3o)
+      this.pullApples();
       this.updatePowerUps();
       this.updateMaze();
       // A computer snake might have swallowed you.
@@ -1091,20 +1144,21 @@ class GameScene extends Phaser.Scene {
       // A burst of sparkles first (see 3n), then the words, if any.
       // A combo's kind has its number on the end, like combo3.
       const combo = pop.kind.startsWith('combo') ? Number(pop.kind.slice(5)) : 0;
-      const bursts = { eat: [0xff5252, 8], crash: [0xffaa00, 26], gulp: [0xffffff, 30], smash: [0x9e9e9e, 16], maze: [0xffd700, 40] };
+      const bursts = { eat: [0xff5252, 8], crash: [0xffaa00, 26], gulp: [0xffffff, 30], smash: [0x9e9e9e, 16], maze: [0xffd700, 40], shield: [0x66ccff, 30] };
       if (combo) bursts[pop.kind] = [0xffa000, 10 + combo * 4];
       const [color, count] = bursts[pop.kind] || [POWER_UPS[pop.kind] && POWER_UPS[pop.kind].good === false ? 0xff4444 : 0x7cfc00, 18];
       this.burst(pop.x, pop.y, color, count);
       // A sound too, if it happened on the screen you're looking at.
       const here = this.screenOf(pop);
       if (this.screenShown === null || this.screenShown === here.sx + ',' + here.sy) {
-        const kind = POWER_UPS[pop.kind] ? (POWER_UPS[pop.kind].good === false ? 'powerdown' : 'powerup') : combo ? 'combo' : pop.kind;
+        const kind = POWER_UPS[pop.kind] ? (POWER_UPS[pop.kind].good === false ? 'powerdown' : 'powerup') : combo ? 'combo' : pop.kind === 'shield' ? 'smash' : pop.kind;
         Sound.play(kind, combo);
       }
       const extras = {
         maze: { says: 'MAZE BEATEN! +' + MAZE_PRIZE, good: true },
         gulp: { says: 'GULP!', good: true },
         smash: { says: 'SMASH! -' + ROCK_SMASH_COSTS, good: true },
+        shield: { says: '🛡️ SAVED!', good: true, color: '#66ccff' },
       };
       if (combo) extras[pop.kind] = { says: 'COMBO x' + combo + '! +' + Math.min(combo - 1, COMBO_MAX_BONUS), good: true, color: '#ffb300', size: Math.min(20 + combo * 2, 34) };
       const info = extras[pop.kind] || POWER_UPS[pop.kind];
@@ -1161,7 +1215,9 @@ class GameScene extends Phaser.Scene {
     // Computer snakes: each in its own color, with a lighter head.
     this.computerSnakes.filter(cs => cs.alive).forEach(cs => {
       cs.points = this.smoothBody(cs);
-      this.drawSnake(cs.points, cs.direction, cs.color, Phaser.Display.Color.IntegerToColor(cs.color).lighten(20).color);
+      const frozen = this.clock < this.frozenUntil; // icy blue while ❄️ frozen
+      const color = frozen ? 0xa8e6ff : cs.color;
+      this.drawSnake(cs.points, cs.direction, color, Phaser.Display.Color.IntegerToColor(color).lighten(20).color);
     });
 
     // Players' snakes, in their colors. The head is a lighter shade.
@@ -1180,6 +1236,11 @@ class GameScene extends Phaser.Scene {
       const side = this.fatCells(p).map((part, i) => ({ x: p.points[i].x + part.x - p.body[i].x, y: p.points[i].y + part.y - p.body[i].y }));
       if (side.length) this.drawSnake(side, p.direction, colors.body, colors.body, alpha, false, p.skin);
       this.drawSnake(p.points, p.direction, colors.body, head, alpha, true, p.skin);
+      // 🛡️ A blue bubble around the head while you have a shield.
+      if (p.shield && p.points.length) {
+        this.graphics.lineStyle(3, 0x66ccff, 0.6 + 0.3 * Math.sin(this.time.now / 150));
+        this.graphics.strokeCircle((p.points[0].x + 0.5) * CELL, (p.points[0].y + 0.5) * CELL, CELL * 0.95);
+      }
     });
 
     if (this.online) this.updateOutText(); // see 3i
@@ -1647,7 +1708,11 @@ GameScene.prototype.fatCells = function (p) {
 GameScene.prototype.updateMaze = function () {
   if (!this.mode.mazes || this.screens < 2) return;
   if (this.maze && this.clock >= this.maze.until) this.setMaze(null);
-  if (!this.maze && this.clock >= this.nextMazeAt) this.makeMaze();
+  if (!this.maze && this.clock >= this.nextMazeAt) {
+    // Roll the dice (see mazeChance in MODES). No maze this time? Try again later.
+    if (Math.random() < (this.mode.mazeChance ?? 1)) this.makeMaze();
+    else this.nextMazeAt = this.clock + MAZE_EVERY;
+  }
 };
 
 // Build a new maze in the middle of a screen that no player is on.
@@ -1898,6 +1963,13 @@ GameScene.prototype.swallow = function (eater, victim) {
 // Online, they lose some points and come back a few seconds later.
 GameScene.prototype.knockOut = function (p, leaveFood) {
   if (p.crashed) return;
+  // 🛡️ A shield takes the hit instead (see 3o).
+  if (p.shield) {
+    p.shield = false;
+    p.bounced = true;
+    this.pops.push({ x: p.body[0].x, y: p.body[0].y, kind: 'shield' });
+    return;
+  }
   p.crashed = true;
   if (leaveFood && p.body.length) this.pops.push({ x: p.body[0].x, y: p.body[0].y, kind: 'crash' });
   if (!this.online) return;
@@ -1934,6 +2006,92 @@ GameScene.prototype.drawSizes = function () {
   });
   this.sizeLabels.forEach(text => text.destroy()); // snakes that are gone
   this.sizeLabels = labels;
+};
+
+
+// =====================================================================
+//  3o. ITEMS
+//  Special power-ups you win (daily challenge, daily login, see
+//  rewards.js) and use when you choose, in Easy and Medium: keys 1 to 4,
+//  or tap/click them in the bottom-right corner.
+// =====================================================================
+
+// The row of item buttons, each with how many you have.
+GameScene.prototype.setupItemBar = function () {
+  const keys = Object.keys(Rewards.ITEMS);
+  const keyNames = ['ONE', 'TWO', 'THREE', 'FOUR'];
+  this.itemButtons = {};
+  let x = WIDTH - 10;
+  const y = PORTRAIT ? HEIGHT - 80 : HEIGHT - 36;
+  [...keys].reverse().forEach(key => {
+    const button = this.onHud(this.add.text(x, y, '', { fontSize: '16px', color: '#ffffff', backgroundColor: '#000000aa', padding: { x: 7, y: 5 } })
+      .setOrigin(1, 0).setInteractive({ useHandCursor: true }));
+    button.on('pointerdown', (pointer, lx, ly, event) => { event.stopPropagation(); this.useItem(key); });
+    this.itemButtons[key] = button;
+    this.showItem(key);
+    x -= button.width + 6;
+  });
+  keys.forEach((key, i) => this.input.keyboard.on('keydown-' + keyNames[i], () => this.useItem(key)));
+};
+
+// "1 🛡️2": the key, the icon and how many. Lit up while it's working.
+GameScene.prototype.showItem = function (key) {
+  const button = this.itemButtons && this.itemButtons[key];
+  if (!button) return;
+  const count = Rewards.items()[key] || 0;
+  const on = key === 'shield' ? this.me.shield : key === 'freeze' ? this.clock < this.frozenUntil : this.has(this.me, key);
+  const number = Object.keys(Rewards.ITEMS).indexOf(key) + 1;
+  button.setText((TOUCH ? '' : number + ' ') + Rewards.ITEMS[key].icon + count)
+    .setBackgroundColor(on ? '#2e7d32' : '#000000aa').setAlpha(count || on ? 1 : 0.45);
+};
+
+GameScene.prototype.useItem = function (key) {
+  const me = this.me;
+  if (!me || me.crashed || !this.timer || this.timer.paused) return;
+  if (key === 'shield' && me.shield) return; // one shield at a time
+  if (!Rewards.useItem(key)) return;
+  if (key === 'shield') me.shield = true;
+  else if (key === 'freeze') this.frozenUntil = this.clock + ITEM_LASTS.freeze;
+  else me.until[key] = this.clock + ITEM_LASTS[key];
+  Sound.play('powerup');
+  this.burst(me.body[0].x, me.body[0].y, 0x66ccff, 20);
+  const item = Rewards.ITEMS[key];
+  const text = this.inWorld(this.add.text((me.body[0].x + 0.5) * CELL, me.body[0].y * CELL, item.icon + ' ' + item.name.toUpperCase() + '!', {
+    fontSize: '22px', fontStyle: 'bold', color: '#66ccff', stroke: '#000000', strokeThickness: 4,
+  }).setOrigin(0.5).setDepth(6));
+  this.tweens.add({ targets: text, y: text.y - 40, alpha: 0, duration: 1000, onComplete: () => text.destroy() });
+};
+
+// After a step: a shielded snake that just bumped into something turns
+// to a safe way instead (it doesn't move this step). And double points
+// adds this step's points again.
+GameScene.prototype.afterItems = function (p) {
+  if (p.bounced) {
+    p.bounced = false;
+    const head = p.body[0];
+    const ways = [{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }]
+      .filter(d => !(d.x === -p.direction.x && d.y === -p.direction.y));
+    const safe = ways.find(d => {
+      const spot = { x: head.x + d.x, y: head.y + d.y };
+      return !this.hitsWall(spot) && !this.snakeAt(spot, [], p);
+    });
+    if (safe) { p.direction = safe; p.nextDirection = safe; }
+  }
+  if (this.has(p, 'double') && p.score > p.scoreBefore) p.score += p.score - p.scoreBefore;
+  if (p === this.me) Object.keys(this.itemButtons || {}).forEach(key => this.showItem(key));
+};
+
+// 🧲 Every step, apples close to a magnet snake slide one square toward it.
+GameScene.prototype.pullApples = function () {
+  this.players.filter(p => !p.crashed && this.has(p, 'magnet')).forEach(p => {
+    const head = p.body[0];
+    this.foods.forEach(food => {
+      const dx = head.x - food.x, dy = head.y - food.y;
+      if (Math.abs(dx) + Math.abs(dy) > MAGNET_REACH || Math.abs(dx) + Math.abs(dy) < 2) return;
+      const to = Math.abs(dx) >= Math.abs(dy) ? { x: food.x + Math.sign(dx), y: food.y } : { x: food.x, y: food.y + Math.sign(dy) };
+      if (!this.isTaken(to)) { food.x = to.x; food.y = to.y; }
+    });
+  });
 };
 
 
@@ -2018,7 +2176,8 @@ function drawBrick(g, x, y) {
 // along its back and diamond-shaped scales, getting thinner toward the
 // tail. Then the head, with eyes and a flicking tongue.
 // skin: 'classic', or a pattern from rewards.js: tiger stripes, leopard
-// spots, rainbow, gold (with a glint running down it) or glowing lava.
+// spots, rainbow, gold (with a glint running down it), glowing lava or
+// twinkling diamond.
 function drawSnakeBody(g, points, direction, bodyColor, headColor, alpha, face, now, skin = 'classic') {
   const n = points.length;
   if (!n) return;
@@ -2145,6 +2304,18 @@ function drawSkinPattern(g, dots, skin, alpha, now) {
         g.fillStyle(0xffffff, alpha * (0.7 - near * 0.15));
         g.fillCircle(d.x - d.r * 0.2, d.y - d.r * 0.2, d.r * 0.45);
       }
+    });
+  }
+  if (skin === 'diamond') {
+    // Sparkling facets: little white diamonds that twinkle on and off.
+    dots.forEach((d, k) => {
+      if (k % 3 !== 0) return;
+      const twinkle = Math.sin(now / 200 + k * 1.7);
+      if (twinkle < 0.2) return;
+      const s = d.r * 0.35 * twinkle;
+      g.fillStyle(0xffffff, alpha * twinkle);
+      g.fillTriangle(d.x, d.y - s, d.x + s * 0.6, d.y, d.x - s * 0.6, d.y);
+      g.fillTriangle(d.x - s * 0.6, d.y, d.x + s * 0.6, d.y, d.x, d.y + s);
     });
   }
   if (skin === 'lava') {
