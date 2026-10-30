@@ -137,10 +137,12 @@
     el('error').textContent = '';
     if (!user) {
       el('signedOut').style.display = 'block';
+      document.querySelectorAll('.full').forEach(x => { if (x.tagName === 'DIV') x.style.display = 'none'; });
       el('cards').innerHTML = el('bars').innerHTML = el('table').innerHTML = el('errors').innerHTML = el('who').innerHTML = '';
       return;
     }
     el('signedOut').style.display = 'none';
+    document.querySelectorAll('.full').forEach(x => { if (x.tagName === 'DIV') x.style.display = ''; });
     el('who').textContent = 'Signed in as ' + user.email;
     const out = document.createElement('button');
     out.textContent = 'Sign out';
