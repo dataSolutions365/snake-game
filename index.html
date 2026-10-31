@@ -4,6 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Snake</title>
+  <!-- Lets the game be installed as an app (see sw.js) -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" href="icons/favicon.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="theme-color" content="#1b1b1b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Snake">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <script>
     // ===== MAINTENANCE SWITCH =====
     // Change false to true to take the game down and show maintenance.html.
@@ -149,6 +158,10 @@
   <script src="save.js?v=39"></script>
   <script src="testmode.js?v=39"></script>
   <script src="game.js?v=39"></script>
+  <!-- Offline helper: saves the game so it works without internet once installed -->
+  <script>
+    if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  </script>
   <!-- Cloudflare Web Analytics: visitor counts (no cookies, no personal info). See dash.cloudflare.com -->
   <script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "c3165e5afecb49a192ef067ee380f7a4"}'></script>
 </body>

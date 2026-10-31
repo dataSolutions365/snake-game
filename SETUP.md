@@ -33,3 +33,12 @@
 4. To bring the game back, change it to `false` and commit again.
 
 To change the message players see, edit the text in `maintenance.html`.
+
+## Installing the game as an app (works offline)
+The game can be installed like an app, with its own icon, and solo games work without internet. Online play, the leaderboard and cloud saves still need internet.
+- **Computer (Chrome or Edge):** open the game, then click the install icon at the right end of the address bar (a small screen with a down arrow), or open the ⋮ menu and choose **Cast, save and share → Install page as app**. Click **Install**.
+- **iPhone or iPad (Safari):** tap the Share button, then **Add to Home Screen**, then **Add**.
+- **Android (Chrome):** tap the ⋮ menu, then **Add to Home screen** (or **Install app**), then **Install**.
+- Open the game once while online after installing, so it saves everything it needs.
+
+How it works: `manifest.webmanifest` gives the app its name and icons (in `icons/`), and `sw.js` saves copies of the game files. When online, the app always loads the newest files from the website first, so updates show up as usual. Nothing in `sw.js` needs changing when you update the game.
