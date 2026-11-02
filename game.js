@@ -20,6 +20,7 @@
 // =====================================================================
 
 const CELL = 20;        // size of one square, in pixels
+const FOLLOW_ZOOM = 1.5; // in worlds bigger than one screen, how close the camera is
 const MOVE_EVERY = 120; // milliseconds between snake steps (smaller = faster)
 
 // On a computer or a sideways phone, the board is wide: 40 x 30 squares.
@@ -1355,7 +1356,8 @@ class GameScene extends Phaser.Scene {
       // A dinosaur has a second body down one side (drawn first, so it's underneath).
       const side = this.fatCells(p).map((part, i) => ({ x: p.points[i].x + part.x - p.body[i].x, y: p.points[i].y + part.y - p.body[i].y }));
       if (side.length) this.drawSnake(side, p.direction, colors.body, colors.body, alpha, false, skin);
-      this.drawSnake(p.points, p.direction, colors.body, head, alpha, true, skin);
+      const gulp = 1 - (this.clock - p.lastAteAt) / 300; // mouth open just after eating
+      this.drawSnake(p.points, p.direction, colors.body, head, alpha, true, skin, gulp > 0 ? Math.min(1, gulp * 2) : 0);
       // 🛡️ A blue bubble around the head while you have a shield.
       if (p.shield && p.points.length) {
         this.graphics.lineStyle(3, 0x66ccff, 0.6 + 0.3 * Math.sin(this.time.now / 150));
@@ -1374,8 +1376,9 @@ class GameScene extends Phaser.Scene {
   // of its body is, in squares (they can be in between squares while it glides).
   // face: false leaves off the head (for a dinosaur's extra side).
 // skin: the pattern on the body (see rewards.js).
-  drawSnake(points, direction, bodyColor, headColor, alpha = 1, face = true, skin = 'classic') {
-    drawSnakeBody(this.graphics, points, direction, bodyColor, headColor, alpha, face, this.time.now, skin);
+  // mouth: how open it is, 0 to 1.
+  drawSnake(points, direction, bodyColor, headColor, alpha = 1, face = true, skin = 'classic', mouth = 0) {
+    drawSnakeBody(this.graphics, points, direction, bodyColor, headColor, alpha, face, this.time.now, skin, mouth);
   }
 
   // ----- 3g. Game over -----
@@ -1673,8 +1676,8 @@ GameScene.prototype.showChatBubble = function (msg) {
 // =====================================================================
 //  3j. THE BIG WORLD, CAMERAS AND SCREEN EFFECTS
 //  The world can be several screens big. Two cameras look at it:
-//    - the main camera shows the screen your snake is on, and slides to
-//      the next one when you cross an edge (and spins with 🌪️)
+//    - the main camera follows your snake's head around the world
+//      (and spins with 🌪️)
 //    - the HUD camera shows the score, timer and mini-map, and never moves
 // =====================================================================
 
@@ -1710,15 +1713,27 @@ GameScene.prototype.screenOf = function (spot) {
   return { sx, sy };
 };
 
-// Point the main camera at the screen my snake's head is on.
+// The main camera glides along behind my snake's head, so the world
+// slides by as you go (it stops at the outside walls). With one screen
+// the whole world fits, so it stays put.
 GameScene.prototype.followMe = function () {
   if (!this.me || !this.me.body.length) return;
   const { sx, sy } = this.screenOf(this.me.body[0]);
-  if (this.screenShown === sx + ',' + sy) return;
-  const cx = (sx + 0.5) * this.frameCols * CELL, cy = (sy + 0.5) * this.frameRows * CELL;
-  if (this.screenShown === null) this.cameras.main.centerOn(cx, cy);
-  else this.cameras.main.pan(cx, cy, 250, 'Sine.easeInOut');
-  this.screenShown = sx + ',' + sy;
+  const first = this.screenShown === null;
+  this.screenShown = sx + ',' + sy; // for sounds and the mini-map
+  if (this.screens < 2) return;
+  const head = (this.me.points || this.me.body)[0];
+  const x = (head.x + 0.5) * CELL, y = (head.y + 0.5) * CELL;
+  if (first) {
+    // The camera moves a little of the way to the head each frame, for a smooth glide.
+    this.camTarget = { x, y };
+    // Zoomed in a little, so the snakes are bigger and there's more to glide past.
+    const cam = this.cameras.main;
+    cam.setZoom(cam.zoom * FOLLOW_ZOOM).setBounds(0, 0, this.cols * CELL, this.rows * CELL).startFollow(this.camTarget, false, 0.12, 0.12);
+    cam.centerOn(x, y);
+  }
+  this.camTarget.x = x;
+  this.camTarget.y = y;
 };
 
 // The edges: a gray wall around the outside of the world, and a faint
@@ -2381,16 +2396,18 @@ function drawBrick(g, x, y) {
   g.fillRect(x * CELL + 1, y * CELL + 1, CELL - 2, 3);
 }
 
-// A snake: a smooth round tube with a shadow, a darker outline, a shine
-// along its back and diamond-shaped scales, getting thinner toward the
-// tail. Then the head, with eyes and a flicking tongue.
+// A snake: a round, shiny body made of overlapping scales, with a soft
+// shadow, a darker outline and a shine along its back, getting thinner
+// toward the tail. Then the head, with nostrils, big eyes and a flicking
+// tongue (or an open mouth, just after eating).
 // skin: 'classic', or a pattern from rewards.js: tiger stripes, leopard
 // spots, rainbow, gold (with a glint running down it), glowing lava or
 // twinkling diamond.
-function drawSnakeBody(g, points, direction, bodyColor, headColor, alpha, face, now, skin = 'classic') {
+// mouth: 0 (shut) to 1 (wide open), for a gulp just after eating.
+function drawSnakeBody(g, points, direction, bodyColor, headColor, alpha, face, now, skin = 'classic', mouth = 0) {
   const n = points.length;
   if (!n) return;
-  const thick = i => CELL * 0.48 * Math.min(1, (n - i) / 5 + 0.35);
+  const thick = i => CELL * 0.5 * Math.min(1, (n - i) / 5 + 0.35);
 
   // Put a circle every third of a square along the body.
   const dots = [];
@@ -2407,67 +2424,111 @@ function drawSnakeBody(g, points, direction, bodyColor, headColor, alpha, face, 
       });
     }
   }
-  const color = c => Phaser.Display.Color.IntegerToColor(c);
-  const dark = color(bodyColor).darken(35).color, light = color(bodyColor).lighten(30).color;
-
-  g.fillStyle(0x000000, 0.25 * alpha);                                      // shadow
-  dots.forEach(d => g.fillCircle(d.x + 3, d.y + 4, d.r));
-  g.fillStyle(dark, alpha);                                                 // outline
-  dots.forEach(d => g.fillCircle(d.x, d.y, d.r));
-  g.fillStyle(bodyColor, alpha);                                            // body
-  dots.forEach((d, k) => {
-    if (skin === 'rainbow') g.fillStyle(Phaser.Display.Color.HSVToRGB((k * 0.035 + now / 1500) % 1, 0.8, 1).color, alpha);
+  const shade = (c, by) => by < 0 ? Phaser.Display.Color.IntegerToColor(c).darken(-by).color : Phaser.Display.Color.IntegerToColor(c).lighten(by).color;
+  // The color of the body at dot k (rainbow and lava change along the body).
+  const colorAt = k => {
+    if (skin === 'rainbow') return Phaser.Display.Color.HSVToRGB((k * 0.035 + now / 1500) % 1, 0.8, 1).color;
     if (skin === 'lava') {
       const glow = 0.5 + 0.5 * Math.sin(now / 180 + k * 0.6);
-      const c = Phaser.Display.Color.Interpolate.ColorWithColor(color(0x5d1a00), color(0xff6d00), 100, glow * 100);
-      g.fillStyle(Phaser.Display.Color.GetColor(c.r, c.g, c.b), alpha);
+      const c = Phaser.Display.Color.Interpolate.ColorWithColor(Phaser.Display.Color.IntegerToColor(0x5d1a00), Phaser.Display.Color.IntegerToColor(0xff6d00), 100, glow * 100);
+      return Phaser.Display.Color.GetColor(c.r, c.g, c.b);
     }
-    g.fillCircle(d.x, d.y, d.r * 0.8);
-  });
+    return bodyColor;
+  };
+  // Shades of each color, worked out once per color.
+  const shades = {};
+  const shadesOf = c => shades[c] || (shades[c] = { rim: shade(c, -25), light: shade(c, 22), shine: shade(c, 45) });
+
+  g.fillStyle(0x000000, 0.12 * alpha);                                      // soft shadow
+  dots.forEach(d => g.fillCircle(d.x + 3, d.y + 5, d.r * 1.08));
+  g.fillStyle(0x000000, 0.18 * alpha);
+  dots.forEach(d => g.fillCircle(d.x + 2, d.y + 4, d.r * 0.92));
+  g.fillStyle(shade(bodyColor, -45), alpha);                                // outline
+  dots.forEach(d => g.fillCircle(d.x, d.y, d.r));
+
+  // Scales: from the tail up to the head, each one a little ball, lit from
+  // the top left, laid over the one behind it. Together they look like a
+  // round, shiny body with rows of scales.
+  for (let k = dots.length - 1; k >= 0; k--) {
+    const d = dots[k], c = colorAt(k), s = shadesOf(c);
+    g.fillStyle(s.rim, alpha);
+    g.fillCircle(d.x, d.y, d.r * 0.86);
+    g.fillStyle(c, alpha);
+    g.fillCircle(d.x - d.r * 0.08, d.y - d.r * 0.08, d.r * 0.7);
+    g.fillStyle(s.light, alpha);
+    g.fillCircle(d.x - d.r * 0.2, d.y - d.r * 0.2, d.r * 0.42);
+  }
   drawSkinPattern(g, dots, skin, alpha, now);
   dots.forEach((d, k) => {                                                  // shine along the back
     const next = dots[k + 1];
     if (!next || Math.abs(next.x - d.x) + Math.abs(next.y - d.y) > CELL) return;
-    g.lineStyle(d.r * 0.45, light, alpha * 0.55);
-    g.lineBetween(d.x - d.r * 0.22, d.y - d.r * 0.22, next.x - next.r * 0.22, next.y - next.r * 0.22);
+    g.lineStyle(d.r * 0.28, 0xffffff, alpha * 0.35);
+    g.lineBetween(d.x - d.r * 0.3, d.y - d.r * 0.3, next.x - next.r * 0.3, next.y - next.r * 0.3);
   });
-  g.fillStyle(dark, alpha * 0.8);                                           // scales
-  dots.forEach((d, k) => {
-    if (k % 3 !== 1 || k < 4 || skin === 'tiger' || skin === 'leopard') return;
-    const s = d.r * 0.38;
-    g.fillTriangle(d.x, d.y - s, d.x + s, d.y, d.x - s, d.y);
-    g.fillTriangle(d.x - s, d.y, d.x + s, d.y, d.x, d.y + s);
-  });
+  g.fillStyle(0xffffff, alpha * 0.7);                                       // glints
+  dots.forEach((d, k) => { if (k % 3 === 0) g.fillCircle(d.x - d.r * 0.35, d.y - d.r * 0.35, d.r * 0.12); });
   if (!face) return;
 
-  // Head: a bigger rounded head and snout, pointing the way it's going.
+  // Head: a bigger, rounded, shiny head and snout, pointing the way it's going.
   const h = dots[0], fx = direction.x, fy = direction.y, sx = -fy, sy = fx;
+  const sn = { x: h.x + fx * CELL * 0.3, y: h.y + fy * CELL * 0.3 };       // the snout
+  const hs = shadesOf(headColor);
   g.fillStyle(0x000000, 0.25 * alpha);
-  g.fillCircle(h.x + 3, h.y + 4, CELL * 0.6);
-  g.fillStyle(color(headColor).darken(35).color, alpha);
-  g.fillCircle(h.x, h.y, CELL * 0.6);
-  g.fillCircle(h.x + fx * CELL * 0.28, h.y + fy * CELL * 0.28, CELL * 0.46);
+  g.fillCircle(h.x + 2, h.y + 4, CELL * 0.64);
+  g.fillCircle(sn.x + 2, sn.y + 4, CELL * 0.48);
+  g.fillStyle(shade(headColor, -45), alpha);
+  g.fillCircle(h.x, h.y, CELL * 0.64);
+  g.fillCircle(sn.x, sn.y, CELL * 0.48);
+  g.fillStyle(hs.rim, alpha);
+  g.fillCircle(h.x, h.y, CELL * 0.56);
+  g.fillCircle(sn.x, sn.y, CELL * 0.4);
   g.fillStyle(headColor, alpha);
-  g.fillCircle(h.x, h.y, CELL * 0.5);
-  g.fillCircle(h.x + fx * CELL * 0.28, h.y + fy * CELL * 0.28, CELL * 0.37);
-  g.fillStyle(0xffffff, alpha * 0.5);
-  g.fillCircle(h.x - CELL * 0.12, h.y - CELL * 0.12, CELL * 0.12);
+  g.fillCircle(h.x - CELL * 0.05, h.y - CELL * 0.05, CELL * 0.46);
+  g.fillCircle(sn.x - CELL * 0.04, sn.y - CELL * 0.04, CELL * 0.32);
+  g.fillStyle(hs.shine, alpha);
+  g.fillCircle(h.x - CELL * 0.14, h.y - CELL * 0.14, CELL * 0.24);
+  g.fillStyle(0xffffff, alpha * 0.8);
+  g.fillCircle(h.x - CELL * 0.2, h.y - CELL * 0.2, CELL * 0.08);
 
-  // Eyes: yellow with black slit pupils.
+  // An open mouth: a dark wedge cut into the snout, with a pink tongue
+  // and two little white fangs.
+  if (mouth > 0) {
+    const tip = { x: h.x + fx * CELL * 0.85, y: h.y + fy * CELL * 0.85 };
+    const w = CELL * 0.34 * mouth;
+    g.fillStyle(0x3e0a0a, alpha);
+    g.fillTriangle(h.x + fx * CELL * 0.12, h.y + fy * CELL * 0.12, tip.x + sx * w, tip.y + sy * w, tip.x - sx * w, tip.y - sy * w);
+    g.fillStyle(0xff6f91, alpha);
+    g.fillCircle(h.x + fx * CELL * 0.5, h.y + fy * CELL * 0.5, CELL * 0.1 * mouth);
+    g.fillStyle(0xffffff, alpha);
+    [-1, 1].forEach(side => g.fillTriangle(
+      tip.x + sx * side * w * 0.8, tip.y + sy * side * w * 0.8,
+      tip.x + sx * side * w * 0.5, tip.y + sy * side * w * 0.5,
+      tip.x + sx * side * w * 0.65 - fx * 4, tip.y + sy * side * w * 0.65 - fy * 4));
+  } else {
+    // Nostrils: two dark dots on the end of the snout.
+    g.fillStyle(shade(headColor, -60), alpha);
+    [-1, 1].forEach(side => g.fillCircle(sn.x + fx * CELL * 0.22 + sx * side * CELL * 0.1, sn.y + fy * CELL * 0.22 + sy * side * CELL * 0.1, 1.2));
+  }
+
+  // Eyes: big and yellow, with black slit pupils and a white sparkle.
   [-1, 1].forEach(side => {
-    const ex = h.x + fx * CELL * 0.12 + sx * side * CELL * 0.26, ey = h.y + fy * CELL * 0.12 + sy * side * CELL * 0.26;
-    g.fillStyle(0x000000, alpha);
-    g.fillCircle(ex, ey, CELL * 0.17);
+    const ex = h.x + fx * CELL * 0.1 + sx * side * CELL * 0.3, ey = h.y + fy * CELL * 0.1 + sy * side * CELL * 0.3;
+    g.fillStyle(0x111111, alpha);
+    g.fillCircle(ex, ey, CELL * 0.2);
+    g.fillStyle(0xd4a017, alpha);
+    g.fillCircle(ex, ey, CELL * 0.16);
     g.fillStyle(0xffeb3b, alpha);
-    g.fillCircle(ex, ey, CELL * 0.13);
+    g.fillCircle(ex - CELL * 0.02, ey - CELL * 0.02, CELL * 0.11);
     g.fillStyle(0x000000, alpha);
-    g.fillEllipse(ex + fx * CELL * 0.03, ey + fy * CELL * 0.03, fx ? CELL * 0.18 : CELL * 0.06, fx ? CELL * 0.06 : CELL * 0.18);
+    g.fillEllipse(ex + fx * CELL * 0.03, ey + fy * CELL * 0.03, fx ? CELL * 0.2 : CELL * 0.07, fx ? CELL * 0.07 : CELL * 0.2);
+    g.fillStyle(0xffffff, alpha);
+    g.fillCircle(ex - CELL * 0.06, ey - CELL * 0.06, CELL * 0.05);
   });
 
   // Tongue: a red forked line, out for a moment every couple of seconds.
-  if (Math.floor(now / 300) % 6 === 0) {
-    const bx = h.x + fx * CELL * 0.55, by = h.y + fy * CELL * 0.55;
-    const tx = h.x + fx * CELL * 0.95, ty = h.y + fy * CELL * 0.95;
+  if (!mouth && Math.floor(now / 300) % 6 === 0) {
+    const bx = h.x + fx * CELL * 0.6, by = h.y + fy * CELL * 0.6;
+    const tx = h.x + fx * CELL * 1.0, ty = h.y + fy * CELL * 1.0;
     g.lineStyle(2, 0xff1744, alpha);
     g.lineBetween(bx, by, tx, ty);
     g.lineBetween(tx, ty, tx + (fx + sx) * CELL * 0.15, ty + (fy + sy) * CELL * 0.15);
